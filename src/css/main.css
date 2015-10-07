@@ -1,0 +1,98 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  padding: 0;
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, ".SFNSDisplay-Regular", "Helvetica Neue", "Lucida Grande";
+  font-size: 24px;
+}
+
+#info {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 240px;
+  background: #111;
+  padding: 16px;
+  font-size: 32px;
+}
+
+#info, #info a {
+  color: #fff;
+}
+
+#info a:visited {
+  color: #888;
+}
+
+#info .info-copyright {
+  position: absolute;
+  bottom: 16px;
+  font-size: 8px;
+}
+
+#content {
+  margin-left: 256px;
+  padding: 16px;
+}
+
+#content, #content a {
+  color: #222;
+}
+
+#content a:visited {
+  color: #777;
+}
+
+#content .post .post-header h1 {
+  font-size: 48px;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+#content .post-list .post-list-date,
+#content .post .post-header-date {
+  font-size: 16px;
+  color: #ccc;
+}
+
+#content .post img {
+  max-width: 100%;
+}
+
+#content pre {
+  background: #FFFDE3;
+  border: 1px solid #666;
+  font-size: 14px;
+  padding: 8px;
+  margin: 0 24px;
+}
+
+@media screen and (max-width: 1195px) {
+  #info {
+    position: inherit;
+    width: 100%;
+    margin-bottom: 24px;
+  }
+
+  #info .info-copyright {
+    position: inherit;
+    text-align: right;
+  }
+
+  #content {
+    margin-left: 0px;
+    text-overflow: ellipsis;
+    word-wrap: break-word;
+  }
+
+  #content pre {
+    margin: 0;
+    font-size: 24px;
+    padding: 0;
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "source": "src",
+  "destination": "public",
+  "metadata": {
+    "title": "Fedor Indutny's blog",
+    "description": "Node.js core, compilers, crypto"
+  },
+  "plugins": [{
+    "metalsmith-markdown": {},
+    "metalsmith-permalinks": {
+    }
+  }, {
+    "metalsmith-collections": {
+      "articles": {
+        "pattern": "+([a-f0-9]).*\/index.html",
+        "sortBy": "date",
+        "reverse": true
+      }
+    }
+  }, {
+    "metalsmith-layouts": {
+      "engine": "handlebars",
+      "directory": "templates",
+      "partials": "templates/partials",
+      "default": "post.hbs",
+      "pattern": "**/*.html"
+    }
+  }]
+}

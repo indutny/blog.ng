@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "metalsmith"
+    "build": "metalsmith",
+    "deploy": "npm run build && cd public && git init . && git add . && git commit -m \"Deploy\"; git push \"git@github.com:indutny/blog.ng.git\" master:gh-pages --force && rm -rf .git"
   },
   "keywords": [],
   "author": "",

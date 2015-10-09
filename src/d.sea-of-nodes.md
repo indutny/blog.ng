@@ -19,7 +19,7 @@ date: 2015-10-08
 This post is going to be about the sea-of-nodes compiler concept that I have
 recently learned.
 
-While it is completely not necessary, it may be useful to take a peek at the
+While it is not completely necessary, it may be useful to take a peek at the
 some of my previous posts on JIT-compilers before reading this:
 
 * [How to start JIT-ting][0]
@@ -29,32 +29,34 @@ some of my previous posts on JIT-compilers before reading this:
 
 ## Compilers = translators
 
-Compilers is something that every Software Engineer uses several times a day.
+Compilers are something that every Software Engineer uses several times a day.
 Surprisingly even people who consider themselves to be far from writing the
-code, still use the compilers quite heavily throughout their day. This is
+code, still use a compiler quite heavily throughout their day. This is
 because most of the web depends on client-side code execution, and many of such
 client-side programs are passed to the browser in a form of the source code.
 
-Here we come to important thing: while source code is (usually) human-readable,
-it looks like a complete garbage to your laptop/computer/phone/...'s CPU. On
-other hand, machine code, that computers **can** read, is (almost always) not
-human-readable. Something should be done about it, and the solution to this
-problem is provided by the process called **translation**.
+Here we come to an important thing: while source code is (usually)
+human-readable, it looks like complete garbage to your
+laptop/computer/phone/...'s CPU. On other hand, machine code, that computers
+**can** read, is (almost always) not human-readable. Something should be done
+about it, and the solution to this problem is provided by the process called
+**translation**.
 
-Trivial compilers do a single pass of _translation_: from the source code to the
-machine code. More usual compilers do at least two passes: from the source code
-to [Abstract Syntax Tree][4] (AST), and from [AST][4] to machine code. [AST][4]
-in this case acts like an _Intermediate Representation_ (IR), and as the name
-suggests, [AST][4] is just another form of the same source code.
+Trivial compilers perform a single pass of _translation_: from the source code
+to the machine code. However, in practice most compilers do at least two passes:
+from the source code to [Abstract Syntax Tree][4] (AST), and from [AST][4] to
+machine code. [AST][4] in this case acts like an _Intermediate Representation_
+(IR), and as the name suggests, [AST][4] is just another form of the same source
+code.
 
 There is no limit on the layer count. Each new layer brings the source program
 closer to how it will look like in machine code.
 
 ## Optimization layers
 
-However, not all layers are used just for translation. Many compilers are also
-try to optimize the human-written code. (There is always a balance between code
-elegance and code performance).
+However, not all layers are used solely for translation. Many compilers are also
+additionally attempt to optimize the human-written code. (There is always a
+balance between code elegance and code performance).
 
 Take the following JavaScript code, for example:
 
@@ -64,7 +66,7 @@ for (var i = 0; i < arr.length; i++)
 ```
 
 If the compiler would translate it to the machine code straight out of [AST][4],
-it may look this (in very abstract and detached from reality instruction set):
+it may resemeble (in very abstract and detached from reality instruction set):
 
 ```
 i = 0;
@@ -172,43 +174,45 @@ through the different tree nodes.
 
 To safely move the length lookup out of the loop we need to know that the array
 length does not change between the loop's iterations. Humans can do it easily
-just by looking at the source code, but the compiler needs to do lots of work to
-figure this out of the AST.
+just by looking at the source code, but the compiler needs to do quite a lot of
+work to confidently extract those facts from the AST.
 
-As many other compiler problems, this one is commonly solved by introducing one
-more intermediate representation layer. What's needed to optimize this
-particular case is a thing called data-flow graph. Instead of talking about
-syntax-entities (like `for loop`s, `expressions`, ...), we should talk about the
-data itself (read variables values), and how it changes through the program.
+Like many other compiler problems, this is often solved by lifting the data into
+a more appropriate abstraction layer, i.e. intermediate representation. In this
+particular case that choice of IR is known as a data-flow graph (DFG). Instead
+of talking about syntax-entities (like `for loop`s, `expressions`, ...), we
+should talk about the data itself (read, variables values), and how it changes
+through the program.
 
 ## Data-flow Graph
 
 In our particular example, the data we are interested in is the value of
 variable `arr`. We want to be able to easily observe all uses of it to verify
-that there are no out-of-bands accesses and other length-changing uses of that
-array.
+that there are no out-of-bounds accesses or any other change that would modify
+the length of the array.
 
-This is accomplished by introducing def-use (definition and uses) relationship
-between the different data values, and it means that the value is declared once
-(_node_), and is used somewhere to create new values (_edge_). Obviously,
-connecting different values together will form a **data-flow graph** like this:
+This is accomplished by introducing "def-use" (definition and uses) relationship
+between the different data values. Concretely, it means that the value has
+declared once (_node_), and that it has been used somewhere to create new values
+(_edge_ for every use). Obviously, connecting different values together will
+form a **data-flow graph** like this:
 
 ![Data-flow Graph][8]
 
 Note the red `array` box in this vast graph. The solid arrows going out of it
-represent uses of this value. By iterating them compiler can tell that `array`
-value is used at:
+represent uses of this value. By iterating over those edges, the compiler can
+derive that the value of `array` is used at:
 
 - `loadArrayLength`
 - `checkRange`
 - `load`
 - `store`
 
-It could also follow back the dashed lines (these lines are very important, and
-we will discuss them a bit later) going to `checkRange` to verify that
-both `load` and `store` are "guarded" by it, and won't cause array length to
-change. Compiler concludes that it is safe to move `loadArrayLength` out of
-the loop.
+The compiler could also follow the dashed lines (these lines are very important, and
+we will discuss them a bit later) back to `checkRange` to verify that
+both `load` and `store` are "guarded" by it, i.e. the array uses won't cause its
+length to change. Compiler will conclude that it is safe to move
+`loadArrayLength` out of the loop.
 
 By going through the graph further, we may observe that the value of `ssa:phi`
 node is always between `0` and `arr.length`, so the `checkRange` may be removed
@@ -218,8 +222,8 @@ Pretty neat, isn't it?
 
 ## Control Flow Graph
 
-We just used some form of [data-flow analysis][9] to figure out information from
-the program, to be able to make safe assumptions about how it could be
+We just used some form of [data-flow analysis][9] to extract information from
+the program. This allows us to make safe assumptions about how it could be
 optimized.
 
 This _data-flow representation_ is very useful in many other cases too. The only
@@ -229,11 +233,11 @@ code). This intermediate representation is less suitable for generating machine
 code than even the AST.
 
 The reason is that the machine is just a sequential list of instructions, which
-CPU executes one-after-another, and graph does not nearly look like something
-similar. In fact, there is no enforced ordering in it at all.
+the CPU executes one-after-another. Our resulting graph doesn't appear to
+convey that. In fact, there is no enforced ordering in it at all.
 
-Usually, this is solved by grouping the graph nodes into blocks, and calling the
-thing a [Control Flow Graph][10] (CFG). Example:
+Usually, this is solved by grouping the graph nodes into blocks. This
+representation is known as a [Control Flow Graph][10] (CFG). Example:
 ```
 b0 {
   i0 = literal 0
@@ -268,8 +272,9 @@ b4 {
 }
 ```
 
-It is called graph not without the reason. These `bXX` are blocks, and
-`bXX -> bYY` represent a graph edge. Let's visualize it:
+It is called a graph not without the reason. For example, the `bXX` blocks
+represent nodes, and the `bXX -> bYY` arrows represent edges. Let's visualize
+it:
 
 ![CFG][12]
 
@@ -278,21 +283,22 @@ As you can see, there is code before the loop in block `b0`, loop header in
 
 Translation to machine code is very easy from this form. We just replace `iXX`
 identifiers with CPU register names (in some sense, CPU registers are sort of
-variables, but CPU has just fixed amount of them, so we need to be careful to
-not run out of them), and generating machine code for each instruction,
+variables, the CPU has a limited amount of registers, so we need to be careful
+to not run out of them), and generating machine code for each instruction,
 line-by-line.
 
-[CFG][10] has data-flow relations, it also has ordering, so we can do both
-data-flow analysis and machine code generation out of it... but optimizing it,
-moving things around blocks is very complicated and error-prone.
+To recap, [CFG][10] has data-flow relations and also ordering. This allows us to
+utilize it for both data-flow analysis and machine code generation. However,
+attempting to optimize the CFG, by manipulating the blocks and their contents
+contained within it, can quickly become complex and error-prone.
 
 Instead, Clifford Click and Keith D. Cooper [proposed to use][11] an approach
 called **sea-of-nodes**, the very topic of this blog post!
 
 ## Sea-of-Nodes
 
-Remember our fancy data-flow graph with dashed lines? These lines is what makes
-that Intermediate Representation **sea-of-nodes**.
+Remember our fancy data-flow graph with dashed lines? Those dashed-lines are
+actually what make that graph a **sea-of-nodes** graph.
 
 Instead of grouping nodes in blocks and ordering them, we choose to declare the
 control dependencies as the dashed lines in a graph. If we will take that graph,
@@ -309,7 +315,23 @@ Let's take another look at the **sea-of-nodes** representation:
 
 ![Sea-of-Nodes][8]
 
-The striking difference
+The striking difference between this graph and CFG is that there is no ordering
+of the nodes, except the ones that have control dependencies (in other words,
+the nodes participating in the control flow).
+
+This representation is very powerful way to look at the code. It has all
+insights of the general data-flow graph, and could be changed easily without
+constantly removing/replacing nodes in the blocks.
+
+## Reductions
+
+Speaking of changes, let's discuss the way to modify the graph. The sea-of-nodes
+graph is usually modified by doing graph reductions.
+
+--------
+
+Special thanks to [Paul Fryzel][14] for proof-reading this, and providing
+valuable feedback and grammar fixes!
 
 [0]: /4.how-to-start-jitting
 [1]: /5.allocating-numbers
@@ -325,3 +347,4 @@ The striking difference
 [11]: http://www.researchgate.net/profile/Cliff_Click/publication/2394127_Combining_Analyses_Combining_Optimizations/links/0a85e537233956f6dd000000.pdf
 [12]: /images/cfg.svg
 [13]: /images/control-flow-sea.svg
+[14]: https://github.com/paulfryzel

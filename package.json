@@ -1,6 +1,7 @@
 {
   "name": "blog.ng",
   "version": "1.0.0",
+  "private": true,
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -14,6 +15,7 @@
     "handlebars": "^4.0.3",
     "metalsmith": "^2.1.0",
     "metalsmith-collections": "^0.7.0",
+    "metalsmith-feed": "^0.2.0",
     "metalsmith-layouts": "^1.4.1",
     "metalsmith-markdown": "^0.2.1",
     "metalsmith-permalinks": "^0.4.0"

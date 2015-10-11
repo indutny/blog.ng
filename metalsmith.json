@@ -3,7 +3,12 @@
   "destination": "public",
   "metadata": {
     "title": "Fedor Indutny's blog",
-    "description": "Node.js core, compilers, crypto"
+    "description": "Node.js core, compilers, crypto",
+    "site": {
+      "title": "Fedor Indutny's blog",
+      "url": "http://darksi.de",
+      "author": "Fedor Indutny"
+    }
   },
   "plugins": [{
     "metalsmith-markdown": {},
@@ -18,6 +23,9 @@
       }
     }
   }, {
+    "metalsmith-feed": {
+      "collection": "articles"
+    },
     "metalsmith-layouts": {
       "engine": "handlebars",
       "directory": "templates",

@@ -47,28 +47,30 @@ to the machine code. However, in practice most compilers do at least two passes:
 from the source code to [Abstract Syntax Tree][4] (AST), and from [AST][4] to
 machine code. [AST][4] in this case acts like an _Intermediate Representation_
 (IR), and as the name suggests, [AST][4] is just another form of the same source
-code.
+code. These intermediate representations chain together and essentially are
+nothing else but the abstraction layers.
 
 There is no limit on the layer count. Each new layer brings the source program
 closer to how it will look like in machine code.
 
 ## Optimization layers
 
-However, not all layers are used solely for translation. Many compilers are also
-additionally attempt to optimize the human-written code. (There is always a
-balance between code elegance and code performance).
+However, not all layers are used solely for translation. Many compilers also
+additionally attempt to optimize the human-written code. (Which is usually
+written to have a balance between code elegance and code performance).
 
 Take the following JavaScript code, for example:
 
 ```javascript
-for (var i = 0; i < arr.length; i++)
-  arr[i] += 1;
+for (var i = 0, acc = 0; i < arr.length; i++)
+  acc += arr[i];
 ```
 
 If the compiler would translate it to the machine code straight out of [AST][4],
-it may resemeble (in very abstract and detached from reality instruction set):
+it may resemble (in very abstract and detached from reality instruction set):
 
 ```
+acc = 0;
 i = 0;
 loop {
   // Load `.length` field of arr
@@ -77,31 +79,31 @@ loop {
     break;
 
   // Check that `i` is between 0 and `arr.length`
+  // (NOTE: This is necessary for fast loads and
+  // stores).
   checkRange(arr, i);
 
   // Load value
-  tmp = load(arr, i);
+  acc += load(arr, i);
 
-  // Store modified value
-  store(arr, i, tmp + 1);
-
+  // Increment index
   i += 1;
 }
 ```
 
-It may not be obvious, but this code is far from optimal. Length does not really
-change inside of the loop, and the range checks are not necessary at all.
+It may not be obvious, but this code is far from optimal. Array length does not
+really change inside of the loop, and the range checks are not necessary at all.
 Ideally, it should look like this:
 
 ```
+acc = 0;
 i = 0;
 len = loadArrayLength(arr);
 loop {
   if (i >= tmp)
     break;
 
-  tmp = load(arr, i);
-  store(arr, i, tmp + 1);
+  acc += load(arr, i);
   i += 1;
 }
 ```
@@ -123,7 +125,10 @@ _(NOTE: Generated with [esprima][6])_
      declarations:
       [ { type: 'VariableDeclarator',
           id: { type: 'Identifier', name: 'i' },
-          init: { type: 'Literal', value: 0, raw: '0' } } ],
+          init: { type: 'Literal', value: 0, raw: '0' } },
+        { type: 'VariableDeclarator',
+          id: { type: 'Identifier', name: 'acc' },
+          init: { type: 'Literal', value: 0, raw: '0' } }],
      kind: 'var' },
 
   //
@@ -156,12 +161,12 @@ _(NOTE: Generated with [esprima][6])_
      expression:
       { type: 'AssignmentExpression',
         operator: '+=',
-        left:
+        left: { type: 'Identifier', name: 'acc' },
+        right:
          { type: 'MemberExpression',
            computed: true,
            object: { type: 'Identifier', name: 'arr' },
-           property: { type: 'Identifier', name: 'i' } },
-        right: { type: 'Literal', value: 1, raw: '1' } } } }
+           property: { type: 'Identifier', name: 'i' } } } }
 ```
 
 This JSON could also be visualized:
@@ -172,10 +177,10 @@ generating the machine code as we visit the AST nodes. The problem with this
 approach is that the information about variables is very sparse, and is spread
 through the different tree nodes.
 
-To safely move the length lookup out of the loop we need to know that the array
-length does not change between the loop's iterations. Humans can do it easily
-just by looking at the source code, but the compiler needs to do quite a lot of
-work to confidently extract those facts from the AST.
+Again, to safely move the length lookup out of the loop we need to know that the
+array length does not change between the loop's iterations. Humans can do it
+easily just by looking at the source code, but the compiler needs to do quite a
+lot of work to confidently extract those facts directly from the AST.
 
 Like many other compiler problems, this is often solved by lifting the data into
 a more appropriate abstraction layer, i.e. intermediate representation. In this
@@ -192,7 +197,7 @@ that there are no out-of-bounds accesses or any other change that would modify
 the length of the array.
 
 This is accomplished by introducing "def-use" (definition and uses) relationship
-between the different data values. Concretely, it means that the value has
+between the different data values. Concretely, it means that the value has been
 declared once (_node_), and that it has been used somewhere to create new values
 (_edge_ for every use). Obviously, connecting different values together will
 form a **data-flow graph** like this:
@@ -206,17 +211,21 @@ derive that the value of `array` is used at:
 - `loadArrayLength`
 - `checkRange`
 - `load`
-- `store`
 
-The compiler could also follow the dashed lines (these lines are very important, and
-we will discuss them a bit later) back to `checkRange` to verify that
-both `load` and `store` are "guarded" by it, i.e. the array uses won't cause its
-length to change. Compiler will conclude that it is safe to move
-`loadArrayLength` out of the loop.
+Such graphs are constructed in the way that explicitly "clones" the array node,
+if its value was accessed in a destructive manner (i.e. stores, length sizes).
+Whenever we see `array` node and observe its uses - we are always certain that
+its value does not change.
 
+It may sound complicated, but this property of the graph is quite easy to
+achieve. The graph should follow [Single Static Assignment][18] rules.
+
+Seeing that `loadArrayLength` has no control dependency (i.e. no dashed lines;
+we will talk about them in a bit), compiler may conclude that this node is free
+to move anywhere it wants to be and can be placed outside of the loop.
 By going through the graph further, we may observe that the value of `ssa:phi`
 node is always between `0` and `arr.length`, so the `checkRange` may be removed
-altogether too.
+altogether.
 
 Pretty neat, isn't it?
 
@@ -241,34 +250,34 @@ representation is known as a [Control Flow Graph][10] (CFG). Example:
 ```
 b0 {
   i0 = literal 0
-  i1 = array
-  i2 = jump ^b0
+  i1 = literal 0
+
+  i3 = array
+  i4 = jump ^b0
 }
 b0 -> b1
+
 b1 {
-  i3 = ssa:phi ^b1, i0, i14
-  i4 = loadArrayLength i1
-  i5 = jump ^i3
+  i5 = ssa:phi ^b1 i0, i12
+  i6 = ssa:phi ^i5, i1, i14
+
+  i7 = loadArrayLength i3
+  i8 = cmp "<", i6, i7
+  i9 = if ^i6, i8
 }
-b1 -> b2
+b1 -> b2, b3
 b2 {
-  i6 = cmp "<", i3, i4
-  i7 = if ^b2, i6
-}
-b2 -> b3, b4
-b3 {
-  i8 = checkRange ^b3, i1, i3
-  i9 = load ^i8, i1, i3
-  i10 = literal 1
-  i11 = add i9, i10
-  i12 = store ^i9, i1, i3, i11
+  i10 = checkIndex ^b2, i3, i6
+  i11 = load ^i10, i3, i6
+  i12 = add i5, i11
   i13 = literal 1
-  i14 = add i3, i13
-  i15 = jump ^i12
+  i14 = add i6, i13
+  i15 = jump ^b2
 }
-b3 -> b1
-b4 {
-  i16 = return ^b4
+b2 -> b1
+
+b3 {
+  i16 = exit ^b3
 }
 ```
 
@@ -292,8 +301,8 @@ utilize it for both data-flow analysis and machine code generation. However,
 attempting to optimize the CFG, by manipulating the blocks and their contents
 contained within it, can quickly become complex and error-prone.
 
-Instead, Clifford Click and Keith D. Cooper [proposed to use][11] an approach
-called **sea-of-nodes**, the very topic of this blog post!
+Instead, Clifford Click and Keith D. Cooper proposed to use an approach
+called [**sea-of-nodes**][11], the very topic of this blog post!
 
 ## Sea-of-Nodes
 
@@ -301,8 +310,8 @@ Remember our fancy data-flow graph with dashed lines? Those dashed-lines are
 actually what make that graph a **sea-of-nodes** graph.
 
 Instead of grouping nodes in blocks and ordering them, we choose to declare the
-control dependencies as the dashed lines in a graph. If we will take that graph,
-remove everything non-dashed, and group things a bit we will get:
+control dependencies as the dashed edges in a graph. If we will take that graph,
+remove everything **non-dashed**, and group things a bit we will get:
 
 ![Control-flow part of Sea-of-Nodes][13]
 
@@ -326,7 +335,55 @@ constantly removing/replacing nodes in the blocks.
 ## Reductions
 
 Speaking of changes, let's discuss the way to modify the graph. The sea-of-nodes
-graph is usually modified by doing graph reductions.
+graph is usually modified by doing graph reductions. We just queue all nodes in
+the graph. Invoke our reduction function for every node in the queue. Everything
+that this function touches (changes, replaces) is queued back, and will be
+passed to the function later on. If you have many reductions, you can just stack
+them up together and invoke all of them on each node in the queue, or
+alternatively, you can just apply them one after another, if they depend on the
+final state of each other. It works like a charm!
+
+I have written a JavaScript toolset for my sea-of-nodes experiments, which
+includes:
+
+- [json-pipeline][15] - the builder and stdlib of the graph. Provides methods
+  to create nodes, add inputs to them, change their control dependencies, and
+  export/import the graph to/from the printable data!
+- [json-pipeline-reducer][16] - the reductions engine. Just create a reducer
+  instance, feed it several reduction functions, and execute the reducer on the
+  existing [json-pipeline][15] graph.
+- [json-pipeline-scheduler][17] - library for putting back unordered graph in a
+  limited amount of blocks connected to each other by control edges (dashed
+  lines).
+
+Combined together, these tools can solve many problems that could be formulated
+in terms of data-flow equations.
+
+Example of reduction, which will optimize our initial JS code:
+
+```javascript
+for (var i = 0, acc = 0; i < arr.length; i++)
+  acc += arr[i];
+```
+
+### TL;DR
+
+This code chunk is quite big, so if you want to skip it - here are the notes of
+what we will do below:
+
+- Compute integer ranges of various nodes: literal, add, phi
+- Compute limits that apply to branch's body
+- Apply range and limit information (`i` is always a non-negative number limited
+  by `arr.length`) to conclude that length check is not necessary and can be
+  removed
+- `arr.length` will be moved out of the loop automatically by
+  `json-pipeline-scheduler`. This is because it does [Global Code Motion][19] to
+  schedule nodes in blocks.
+
+<script src="https://gist.github.com/indutny/781757293040e8a38efb.js"></script>
+
+Thank you for reading this. Please expect more information about this
+sea-of-nodes approach.
 
 --------
 
@@ -348,3 +405,8 @@ valuable feedback and grammar fixes!
 [12]: /images/cfg.svg
 [13]: /images/control-flow-sea.svg
 [14]: https://github.com/paulfryzel
+[15]: https://github.com/indutny/json-pipeline
+[16]: https://github.com/indutny/json-pipeline-reducer
+[17]: https://github.com/indutny/json-pipeline-scheduler
+[18]: https://en.wikipedia.org/wiki/Static_single_assignment_form
+[19]: https://courses.cs.washington.edu/courses/cse501/04wi/papers/click-pldi95.pdf

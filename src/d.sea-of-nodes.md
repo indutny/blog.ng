@@ -3,17 +3,6 @@ title: Sea of Nodes
 date: 2015-10-08
 ---
 
-## Outline
-
-1. Compilers are translating
-2. Text, AST - not ok for optimizations, need for data-flow graph
-3. Usually control graph is totally separated from data-flow graph, CFG
-4. Sea-of-nodes - same graph, two kinds of edges
-5. Graph reductions
-6. Reachability + const prop example
-7. Scheduling stuff back in blocks
-8. Generating machine code
-
 ## Brief intro
 
 This post is going to be about the sea-of-nodes compiler concept that I have
@@ -81,7 +70,7 @@ loop {
   // Check that `i` is between 0 and `arr.length`
   // (NOTE: This is necessary for fast loads and
   // stores).
-  checkRange(arr, i);
+  checkIndex(arr, i);
 
   // Load value
   acc += load(arr, i);
@@ -209,7 +198,7 @@ represent uses of this value. By iterating over those edges, the compiler can
 derive that the value of `array` is used at:
 
 - `loadArrayLength`
-- `checkRange`
+- `checkIndex`
 - `load`
 
 Such graphs are constructed in the way that explicitly "clones" the array node,
@@ -218,13 +207,36 @@ Whenever we see `array` node and observe its uses - we are always certain that
 its value does not change.
 
 It may sound complicated, but this property of the graph is quite easy to
-achieve. The graph should follow [Single Static Assignment][18] rules.
+achieve. The graph should follow [Single Static Assignment][18] (SSA) rules.
+In short, to convert any program to [SSA][18] the compiler needs to rename all
+assignments and later uses of the variables, to make sure that each variable is
+assigned only once.
+
+Example, before SSA:
+```javascript
+var a = 1;
+console.log(a);
+a = 2;
+console.log(a);
+```
+
+After SSA:
+```javascript
+var a0 = 1;
+console.log(a0);
+var a1 = 2;
+console.log(a1);
+```
+
+This way, we can be sure that when we are talking about `a0` - we are actually
+talking about a single assignment to it. This is really close to how people do
+things in the functional languages!
 
 Seeing that `loadArrayLength` has no control dependency (i.e. no dashed lines;
 we will talk about them in a bit), compiler may conclude that this node is free
 to move anywhere it wants to be and can be placed outside of the loop.
 By going through the graph further, we may observe that the value of `ssa:phi`
-node is always between `0` and `arr.length`, so the `checkRange` may be removed
+node is always between `0` and `arr.length`, so the `checkIndex` may be removed
 altogether.
 
 Pretty neat, isn't it?

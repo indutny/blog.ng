@@ -52,6 +52,10 @@ The API is based on the [uv_stream_t][10] and shouldn't come as a big surprise
 to the users, since [uv_link_t][9] is intended to be used together with
 [libuv][0].
 
+Here is a visual explanation of how [uv_link_t][0] works:
+
+![uv_link_source_t][17]
+
 ## Examples
 
 Before we will take a peek look at the APIs, let's discuss what can be done with
@@ -206,3 +210,4 @@ ls -la out/Release
 [14]: https://github.com/gypkg/gypkg
 [15]: https://github.com/indutny/uv_link_t/blob/master/docs/api.md
 [16]: https://github.com/indutny/uv_link_t/blob/master/docs/implementation-guide.md
+[17]: /images/uv_link_source_t.svg

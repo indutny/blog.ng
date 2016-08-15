@@ -146,6 +146,21 @@ and structures (likes `uv_link_source_t` and `uv_link_observer_t`).
 There is also an [Implementation guide][16] for implementing custom types of
 `uv_link_t`.
 
+## Error reporting
+
+Having multiple independent implementations of `uv_link_t` interface, it is a
+natural question to ask: how does `uv_link_t` handle error code conflict?
+
+The answer is that all error codes returned by `uv_link_...` methods are
+actually prefixed with the index of the particular link in a chain. Thus, even
+if there are several similar links in a chain, it is possible to get the pointer
+to the `uv_link_t` instance that have emitted it:
+
+```c
+int uv_link_errno(uv_link_t** link, int err);
+const char* uv_link_strerror(uv_link_t* link, int err);
+```
+
 ## Foreword: gypkg
 
 [gypkg][14] is recommended to be used when embedding `uv_link_t` in the C

@@ -9,25 +9,25 @@ Writing servers/clients in C could be non-trivial. Even with the help of such
 powerful (and awesome dinosaur) libraries as [libuv][0], it still takes lots of
 effort and boilerplate code to create real world applications.
 
-Some of this boilerplate code comes from the use of widespread protocols like
-TLS (SSL) and HTTP. While there are popular implementations of these available
+Some of this boilerplate code comes from the use of the widespread protocols
+like TLS (SSL) and HTTP. While there are popular implementations available
 as an Open Source libraries ([OpenSSL][1], [http-parser][2]), they still either
 provide very abstract interface (like [http-parser][2]), or an API to transfer
 the responsibility of the networking to the library itself (like `SSL_set_fd()`
 in [OpenSSL][1] and Amazon's [s2n][3]). Such abstract nature makes them easier
-to embed, but the adaptor code inevitably tend to appear in particular
+to embed, but the adaptor code inevitably tend to appear in the particular
 applications.
 
 ## Precursor - StreamBase
 
 [libuv][0] is hardly an exception, and [node.js][4] and [bud][5]'s TLS
-implementation is a vivid evidence of this. However, in a contrast to [bud][5]
+implementation is a vivid evidence of this. However, in a contrast to [bud][5],
 [node.js][4] TLS code lives off on an abstraction called [StreamBase][6]. By
 separating [libuv][0]-specific adaptor code into a generic C++ class, we have
-created a foundation for simpler and reusable implementation of any other
+created a foundation for a simpler and reusable implementation of any other
 protocol! See, for example, recent [node_http_parser.cc][7] which uses only
-a minor amount of power available through the means of [StreamBase][6],
-nevertheless providing [10-20%][8] performance improvement since its inception.
+a minor amount of power available through the means of [StreamBase][6], but
+nevertheless provides [10-20%][8] performance improvement since its inception.
 
 This implementation has some major drawbacks, preventing its wider adoption
 outside of the node.js core:

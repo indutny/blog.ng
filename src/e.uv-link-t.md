@@ -55,7 +55,7 @@ to the users, since [uv_link_t][9] is intended to be used together with
 ## Examples
 
 Before we will take a peek look at the APIs, let's discuss what can be done with
-[uv_link_t][9]. Technically, any stream-based (like TCP) protocol can be
+[uv_link_t][9]. Technically, any stream-based (TCP-based) protocol can be
 implemented on top of it. Multiple protocols can be chained together (that's
 why it is called `uv_`**link**`_t`!), provided that there is an implementation:
 `TCP <-> TLS <-> HTTP <-> WebSocket`. This chaining works in a pretty
@@ -64,7 +64,7 @@ data flow and operation of the other links.
 
 Existing protocols:
 
-* [uv_ssl_t][11] - TLS based on OpenSSL's API
+* [uv_ssl_t][11] - TLS, based on OpenSSL's API
 * [uv_http_t][12] - low-level HTTP/1.1 implementation, possibly incomplete
 
 Small demo-project:
@@ -73,7 +73,7 @@ Small demo-project:
   [uv_http_t][12]
 
 Note that all these projects, including [uv_link_t][9] itself are supposed to
-be built with a [gypkg][14], which is a subject for some future blog post.
+be built with a [gypkg][14], which is a subject for a future blog post.
 
 ## API
 
@@ -97,7 +97,7 @@ void _() {
 ```
 
 In the most of the cases a first link should be an `uv_link_source_t`. It
-consumes an instance of `uv_stream_t`, and will propagate reads and writes from
+consumes an instance of `uv_stream_t`, and propagates reads and writes from
 the whole chain of links connected to it.
 
 ```c
@@ -146,8 +146,8 @@ There is also an [Implementation guide][16] for implementing custom types of
 
 [gypkg][14] is recommended to be used when embedding `uv_link_t` in the C
 project. There are not too many source files to put into a `Makefile` or some
-other build file, but the convenience that [gypkg][14] provides pays off very
-soon!
+other build file, but the convenience that [gypkg][14] provides, pays off very
+quickly!
 
 ### Installation (node.js v6 is required):
 

@@ -58,13 +58,16 @@ Here is a visual explanation of how [uv_link_t][0] works:
 
 ## Examples
 
-Before we will take a peek look at the APIs, let's discuss what can be done with
-[uv_link_t][9]. Technically, any stream-based (TCP-based) protocol can be
-implemented on top of it. Multiple protocols can be chained together (that's
-why it is called `uv_`**link**`_t`!), provided that there is an implementation:
-`TCP <-> TLS <-> HTTP <-> WebSocket`. This chaining works in a pretty
-transparent way, and every segment of it can be observed without disturbing the
-data flow and operation of the other links.
+Before we take a peek at the APIs, let's discuss what can be done with
+[uv_link_t][9]. Technically, any stream-based (i.e. anything that uses
+`uv_stream-t`) protocol can be implemented on top of it. Multiple protocols can
+be chained together (that's why it is called `uv_`**link**`_t`!), provided that
+there is an implementation:
+
+`TCP <-> TLS <-> HTTP <-> WebSocket`.
+
+This chaining works in a pretty transparent way, and every segment of it can be
+observed without disturbing the data flow and operation of the other links.
 
 Existing protocols:
 
@@ -188,13 +191,13 @@ gypkg init
 vim project.gyp
 ```
 
-```json
+```python
 {
   "variables": {
     "gypkg_deps": [
       "git://github.com/libuv/libuv.git@^1.9.0 => uv.gyp:libuv",
       "git://github.com/indutny/uv_link_t@^1.0.0 [gpg] => uv_link_t.gyp:uv_link_t",
-    }
+    },
   },
 
   # Some other GYP things

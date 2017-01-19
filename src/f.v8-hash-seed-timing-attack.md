@@ -1,5 +1,5 @@
 ---
-title: V8 Hash Seed timing attack
+title: V8 hash seed timing attack
 date: 2017-01-19
 ---
 

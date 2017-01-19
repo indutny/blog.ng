@@ -77,7 +77,7 @@ This is how it looks:
 function test(pre, list) {
   const o = {};
   o[pre] = null;
-  for (let i = 0; i &lt; list.length; i++)
+  for (let i = 0; i < list.length; i++)
     o[list[i]] = null;
   return o;
 }

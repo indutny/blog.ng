@@ -83,12 +83,12 @@ function test(pre, list) {
 }
 ```
 
-Now this script has to create `list` of keys, and big number of probes (2093
-strings that are passed one after another as `pre`). It can try each probe with
-the same `list`, and measure the timing with `process.hrtime()` with nanosecond
-precision. When the timing is bigger - the probe was inserted at the start of
-the `DescriptorArray`, and thus its hash value (32 bit number) is less than
-all hashes of the keys in the `list`. When the time delta is least -
+Now this script has to create a `list` of keys, and a large number of probes
+(2093 strings that are passed one after another as `pre`). It can try each probe
+with the same `list`, and measure the timing with `process.hrtime()` with
+nanosecond precision. When the timing is bigger - the probe was inserted at the
+start of the `DescriptorArray`, and thus its hash value (32 bit number) is less
+than all hashes of the keys in the `list`. When the time delta is least -
 probe was appended to the end of the `DescriptorArray`, meaning that its hash
 is the biggest in it.
 

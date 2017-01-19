@@ -143,6 +143,9 @@ around 1ms. The timing difference that we are looking for is about several
 microseconds, and it looks like it is smudged out in the network delay
 distribution.
 
+V8 team is aware of this effort, and the decision is that this is not a security
+defect - hence it is published here.
+
 All code is available on [github][7]. Please enjoy with care!
 
 [0]: https://github.com/nodejs/node-v0.x-archive/issues/2431

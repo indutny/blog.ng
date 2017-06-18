@@ -35,6 +35,13 @@ html, body {
   font-size: 8px;
 }
 
+#info .info-credits {
+  position: absolute;
+  bottom: 32px;
+  font-size: 8px;
+  color: #333;
+}
+
 #content {
   margin-left: 256px;
   padding: 16px;
@@ -95,4 +102,68 @@ html, body {
     font-size: 24px;
     padding: 0;
   }
+}
+
+@keyframes vote-loading {
+  from {
+    border: 1px solid #eee;
+    box-shadow: 0 0 0 rgba(21, 87, 153, 0.0);
+  }
+
+  to {
+    border: 1px solid #aaa;
+    box-shadow: 0 0 8px rgba(21, 87, 153, 0.6);
+  }
+}
+
+.votenow {
+  height: 32px;
+  border-radius: 0.3rem;
+  background: #fff;
+  color: #333;
+  font-size: 16px;
+  float: right;
+  margin: 8px 8px 0 0;
+  text-align: center;
+  user-select: none;
+
+  transition: border 1s, box-shadow 1s, padding-left 0.3s, min-width 0.3s, background-position 0.3s 0.3s;
+  border: 1px solid #aaa;
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+  min-width: 32px;
+  background-position: 4px 32px;
+}
+
+.votenow:not(:disabled) {
+  cursor: pointer;
+}
+
+.votenow.votenow-ready:not(:disabled) {
+  padding-left: 32px;
+  min-width: 64px;
+  background: #fff url(/images/upvote.svg) no-repeat 4px 4px;
+}
+
+.votenow.votenow-loading,
+.votenow.votenow-computing,
+.votenow.votenow-voting {
+  animation-name: vote-loading;
+  animation-direction: alternate;
+  animation-duration: 0.5s;
+  animation-iteration-count: infinite;
+  cursor: progress;
+}
+
+.votenow.votenow-ready:not(:disabled):hover {
+  font-size: 0;
+}
+
+.votenow.votenow-ready:not(:disabled):hover:after {
+  font-size: 16px;
+  font-weight: bold;
+  content: '+1';
+}
+
+.votenow.votenow-voting {
+  border: 1px solid #333;
 }

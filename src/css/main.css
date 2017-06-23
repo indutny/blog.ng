@@ -141,7 +141,7 @@ html, body {
 .votenow.votenow-ready:not(:disabled) {
   padding-left: 32px;
   min-width: 64px;
-  background: #fff url(/images/upvote.svg) no-repeat 4px 4px;
+  background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" x="0px" y="0px" viewBox="0 0 512 640"><g><polygon points="128,320 256,192 384,320"/></g></svg>') no-repeat 4px 4px;
 }
 
 .votenow.votenow-loading,

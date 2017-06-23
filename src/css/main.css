@@ -116,7 +116,7 @@ html, body {
   }
 }
 
-.votenow {
+.votewdgt {
   height: 32px;
   border-radius: 0.3rem;
   background: #fff;
@@ -134,19 +134,19 @@ html, body {
   background-position: 4px 32px;
 }
 
-.votenow:not(:disabled) {
+.votewdgt:not(:disabled) {
   cursor: pointer;
 }
 
-.votenow.votenow-ready:not(:disabled) {
+.votewdgt.votewdgt-ready:not(:disabled) {
   padding-left: 32px;
   min-width: 64px;
   background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" x="0px" y="0px" viewBox="0 0 512 640"><g><polygon points="128,320 256,192 384,320"/></g></svg>') no-repeat 4px 4px;
 }
 
-.votenow.votenow-loading,
-.votenow.votenow-computing,
-.votenow.votenow-voting {
+.votewdgt.votewdgt-loading,
+.votewdgt.votewdgt-computing,
+.votewdgt.votewdgt-voting {
   animation-name: vote-loading;
   animation-direction: alternate;
   animation-duration: 0.5s;
@@ -154,16 +154,16 @@ html, body {
   cursor: progress;
 }
 
-.votenow.votenow-ready:not(:disabled):hover {
+.votewdgt.votewdgt-ready:not(:disabled):hover {
   font-size: 0;
 }
 
-.votenow.votenow-ready:not(:disabled):hover:after {
+.votewdgt.votewdgt-ready:not(:disabled):hover:after {
   font-size: 16px;
   font-weight: bold;
   content: '+1';
 }
 
-.votenow.votenow-voting {
+.votewdgt.votewdgt-voting {
   border: 1px solid #333;
 }

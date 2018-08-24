@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Side Projects</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Side Projects</h1>
+          <span class=post-header-date>Wed Feb 25 2015 19:00:00 GMT-0500 (Eastern Standard Time)</span>
+        </section>
+
+        <section class=post-body>
+          <p>After reading <a href="https://github.com/antirez">antirez</a>&#39;s <a href="http://antirez.com/news/86">blog post</a> I decided that it might be a good
+exercise to write down the notable side projects that I spent my time upon since
+Jan 2014.</p>
+<p>Here is the list and some comments from me:</p>
+<h3 id="bn-js"><a href="https://github.com/indutny/bn.js">bn.js</a></h3>
+<p>JavaScript library for working with Big Numbers. <a href="https://github.com/indutny/bn.js">bn.js</a> is an ultra-fast
+<a href="https://github.com/justmoon/node-bignum">bignum</a> alternative with support for running in io.js/node.js and browsers.</p>
+<p>This one took lots of time and effort through whole year with some periodic
+<a href="https://github.com/indutny/bn.js/graphs/contributors">sparks in a contributions graph</a>, and many PRs from OpenSource community.
+Seriously, big kudos to you people for helping me with it!</p>
+<h3 id="elliptic"><a href="https://github.com/indutny/elliptic">elliptic</a></h3>
+<p>JS library for doing Elliptic Curve crypto. It was the reason for creating the
+<a href="https://github.com/indutny/bn.js">bn.js</a> in the first place, and excuse for me to learn more about EC
+cryptography and crazy math behind it.</p>
+<h3 id="bud"><a href="https://github.com/indutny/bud">bud</a></h3>
+<p>A friendly and clever TLS-terminating proxy in C.</p>
+<p>Although I worked on it since Nov 2013, lots of development happened during the
+2014 year. This is my biggest project in C so far, and it has taught me a lot
+about designing the APIs and interfaces in low-level languages.</p>
+<p>Bud seens lots of love from <a href="https://github.com/odeke-em">Emmanuel Odeke</a>. Big thanks to you, Emmanuel!</p>
+<h3 id="tls-js"><a href="https://github.com/indutny/tls.js">tls.js</a></h3>
+<p>(Incomplete) TLS implementation in JavaScript.</p>
+<p>Totally experimental protocol implementation. Did it just for fun, but it turned
+to be useful in screening the web servers.</p>
+<h3 id="hash-js"><a href="https://github.com/indutny/hash.js">hash.js</a></h3>
+<p>Implementations of SHA1, SHA224, SHA256, SHA384, SHA512, RIPEMD160, various
+HMACs. One of the mandatory dependencies of...</p>
+<h3 id="bcoin"><a href="https://github.com/indutny/bcoin">bcoin</a></h3>
+<p>BitCoin SPV client implementation. Purely experimental, but I heard that some
+people do use it.</p>
+<p>Lots of contributions from <a href="https://github.com/chjj">Christopher Jeffrey</a> here. Thank you!</p>
+<h3 id="bthread-src-"><a href="https://chrome.google.com/webstore/detail/bthread/ldbfhhncehnfgppdlgjhfgffachpehkd">bthread</a> (<a href="https://github.com/indutny/bthread">src</a>)</h3>
+<p>Writing blog posts in a BitCoin block-chain.</p>
+<p><em>I know many people hate me for this, but still I wanted to experiment with it
+a little</em>.</p>
+<h3 id="js-js"><a href="https://github.com/js-js/js.js">js.js</a></h3>
+<p>JS JIT compiler written in JS.</p>
+<p>Very preliminary implementation with little or no compatibility with ECMAScript
+yet :)</p>
+<h3 id="heap-js-jit-js-cfg-js-"><a href="https://github.com/js-js">heap.js, jit.js, cfg.js, ...</a></h3>
+<p>Various <a href="https://github.com/js-js/js.js">js.js</a> dependencies.</p>
+<h3 id="lll-reduction"><a href="https://github.com/indutny/lll-reduction">lll-reduction</a></h3>
+<p><a href="http://en.wikipedia.org/wiki/Lenstra%E2%80%93Lenstra%E2%80%93Lov%C3%A1sz_lattice_basis_reduction_algorithm">Lenstra–Lenstra–Lovász algorithm</a> JavaScript implementation.</p>
+<p>I don&#39;t remember exact reasons for writing this, but I guess I thought about
+doing more optimal <a href="http://www.hyperelliptic.org/tanja/conf/ECC08/slides/Mike-Scott.pdf">GLV Method</a> for <a href="https://github.com/indutny/elliptic">elliptic</a>.</p>
+<h3 id="core2dump"><a href="https://github.com/indutny/core2dump">core2dump</a></h3>
+<p>Creating heap snapshots out of the core file on OS X, linuxes, and FreeBSD.</p>
+<h3 id="asn1-js"><a href="https://github.com/indutny/asn1.js">asn1.js</a></h3>
+<p>ASN.1 encoding implementation in JS.</p>
+<h3 id="miller-rabin"><a href="https://github.com/indutny/miller-rabin">miller-rabin</a></h3>
+<p>Miller-Rabin primality test in JS.</p>
+<h3 id="caine"><a href="https://github.com/indutny/caine">caine</a></h3>
+<p>Butler bot for github projects. I wanted it to be used for io.js, but we decided
+to walk a different road.</p>
+<h4 id="epilogue">Epilogue</h4>
+<p>I guess that&#39;s it.</p>
+<p>Most of these projects were a big incentive for me to dig into the protocols,
+technology, science. I find it much more enjoyable and interesting to
+investigate new topics through their applications.</p>
+<p><strong>Thank you for all your contributions, people! It is really awesome to see
+you interested in helping me with these and other projects!</strong></p>
+<p>Thanks for reading this.</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

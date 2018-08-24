@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>SMIs and Doubles</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>SMIs and Doubles</h1>
+          <span class=post-header-date>Wed Nov 13 2013 19:00:00 GMT-0500 (Eastern Standard Time)</span>
+        </section>
+
+        <section class=post-body>
+          <p>This is a third post in the series of the JIT compiling crash-course. For a
+context please consider reading <a href="/4.how-to-start-jitting">the first one</a> and <a href="/5.allocating-numbers">the second</a>.</p>
+<h2 id="goal">Goal</h2>
+<p>Last time we created very basic bump memory allocator and made our existing
+code work with floating point double numbers, stored in the allocated heap
+objects. However floating point numbers are not suitable for some of
+precision-dependent operations and also, since they are stored in memory,
+requiring additional memory loads and stores, slowing down the code performance.</p>
+<p>Both of this problems could be solved by working with the integers stored in the
+registers (as we did it in <a href="/4.how-to-start-jitting">first blog post</a>), which means that we will need
+to support both types of numbers in our compiler&#39;s runtime (doubles and
+integers).</p>
+<h2 id="tagging">Tagging</h2>
+<p>Let&#39;s recall that we are storing both pointers and numbers in the 64bit general
+purpose registers (<code>rax</code>, <code>rbx</code>, ...). The main issue here is that, given some
+register (say <code>rax</code>), we should be able to tell if it is a pointer to the heap
+object (a &quot;boxed value&quot;) or an integer itself (an &quot;unboxed value&quot;,
+Small Integer, or <em>SMI</em>).</p>
+<p>Usually, a method called &quot;tagging&quot; is used to solve this. While there are
+<a href="http://wingolog.org/archives/2011/05/18/value-representation-in-javascript-implementations">various ways</a> to implement tagging, including: <a href="http://evilpie.github.io/sayrer-fatval-backup/cache.aspx.htm">Nan-Boxing</a> (scroll down
+to <em>Mozilla’s New JavaScript Value Representation</em>), Nun-Boxing, and probably
+some others, our compiler will just reserve the least significant bit of the
+64bit register and put <code>1</code> here if the value is a pointer and <code>0</code> if it is a
+<em>SMI</em> (Small Integer).</p>
+<p>Here is an example of this representation:</p>
+<p><img src="/images/smi-and-pointer.png" alt="Smi and Pointer"></p>
+<p>Note that to get the actual value of a SMI (&quot;untag&quot;) we will need to shift it
+right for one bit (<code>&gt;&gt; 1</code>), and to convert an integer to the SMI - shift left
+(<code>&lt;&lt; 1</code>). Using zero for tagging SMIs pays off greatly, since we don&#39;t need to
+to untag numbers to perform addition and subtraction.</p>
+<p>To use tagged pointers to heap objects we&#39;ll need to look one byte behind the
+actual value, which is relatively simple in the assembly language:</p>
+<pre><code class="lang-javascript">// Lets say that tagged pointer is in rbx
+// And we&#39;re loading its contents into the rax
+this.mov(&#39;rax&#39;, [&#39;rbx&#39;, -1]);
+</code></pre>
+<p>And just for the convenience - example of untagging SMIs:</p>
+<pre><code class="lang-javascript">// Untag
+this.shr(&#39;rax&#39;, 1);
+// Tag
+this.shl(&#39;rax&#39;, 1);
+</code></pre>
+<p>And now the most important part that we&#39;re going to do a lot - checking if the
+value is a pointer:</p>
+<pre><code class="lang-javascript">// Test that &#39;rax&#39; has the last bit
+this.test(&#39;rax&#39;, 1);
+
+// &#39;z&#39; stands for zero
+// Basically, jump to the label if `(rax &amp; 1) == 0`
+this.j(&#39;z&#39;, &#39;is-smi&#39;);
+
+// &#39;nz&#39; stands for non-zero
+// Basically, jump to the label if `(rax &amp; 1) != 0`
+this.j(&#39;ne&#39;, &#39;is-heap-object-pointer&#39;);
+</code></pre>
+<h2 id="reworking-previous-code">Reworking previous code</h2>
+<p>Using <a href="https://github.com/indutny/jit.js/tree/master/example/heap">the code from the previous blog post</a>, we can finally proceed to
+implementing all this recently learned stuff.</p>
+<p>First, let&#39;s add a convenient helper methods to the assembly context.</p>
+<pre><code class="lang-javascript">function untagSmi(reg) {
+  this.shr(reg, 1);
+};
+
+function checkSmi(value, t, f) {
+  // If no `true-` and `false-` bodies were specified -
+  // just test the value.
+  if (!t &amp;&amp; !f)
+    return this.test(value, 1);
+
+  // Enter the scope to be able to use named labels
+  this.labelScope(function() {
+    // Test the value
+    this.test(value, 1);
+
+    // Skip SMI case if result is non-zero
+    this.j(&#39;nz&#39;, &#39;non-smi&#39;);
+
+    // Run SMI case
+    t.call(this);
+
+    // Jump to the shared end
+    this.j(&#39;end&#39;);
+
+    // Non-SMI case
+    this.bind(&#39;non-smi&#39;);
+    f.call(this);
+
+    // Shared end
+    this.bind(&#39;end&#39;);
+  });
+};
+
+function heapOffset(reg, offset) {
+  // NOTE: 8 is the size of pointer on x64 arch.
+  // We&#39;re adding 1 to the offset, because first
+  // quad word is used to store the heap object&#39;s type.
+  return [reg, 8 * ((offset | 0) + 1) - 1];
+};
+</code></pre>
+<p>We can hook this methods into the jit.js context by passing them as a <code>helpers</code>
+option to the <code>jit.compile()</code> API method:</p>
+<pre><code class="lang-javascript">var helpers = {
+  untagSmi: untagSmi,
+  checkSmi: checkSmi,
+  heapOffset: heapOffset
+};
+
+jit.compile(function() {
+  // We can use helpers here:
+  this.untagSmi(&#39;rax&#39;);
+
+  this.checkSmi(&#39;rbx&#39;, function() {
+    // Work with SMI
+  }, function() {
+    // Work with pointer
+  });
+
+  this.mov(this.heapOffset(&#39;rbx&#39;, 0), 1);
+}, { stubs: stubs, helpers: helpers });
+</code></pre>
+<h2 id="allocation">Allocation</h2>
+<p>Now we should make our <code>Alloc</code> stub return tagged pointer. Also we will use the
+opportunity and improve it a bit by adding <code>tag</code> and <code>size</code> arguments to the
+stub (thus making possible generalized allocation with variable size and tag
+in the future):</p>
+<pre><code class="lang-javascript">stubs.define(&#39;Alloc&#39;, function(size, tag) {
+  // Save &#39;rbx&#39; and &#39;rcx&#39; registers
+  this.spill([&#39;rbx&#39;, &#39;rcx&#39;], function() {
+    // Load `offset`
+    //
+    // NOTE: We&#39;ll use pointer to `offset` variable,
+    // to be able to update
+    // it below
+    this.mov(&#39;rax&#39;, this.ptr(offset));
+    this.mov(&#39;rax&#39;, [&#39;rax&#39;]);
+
+    // Load end
+    //
+    // NOTE: Same applies to end, though, we&#39;re
+    // not updating it right now
+    this.mov(&#39;rbx&#39;, this.ptr(end));
+    this.mov(&#39;rbx&#39;, [&#39;rbx&#39;]);
+
+    // Calculate new `offset`
+    this.mov(&#39;rcx&#39;, &#39;rax&#39;);
+
+    // Add tag size and body size
+    this.add(&#39;rcx&#39;, 8);
+    this.add(&#39;rcx&#39;, size);
+
+    // Check if we won&#39;t overflow our fixed size buffer
+    this.cmp(&#39;rcx&#39;, &#39;rbx&#39;);
+
+    // this.j() performs conditional jump to the specified label.
+    // &#39;g&#39; stands for &#39;greater&#39;
+    // &#39;overflow&#39; is a label name, bound below
+    this.j(&#39;g&#39;, &#39;overflow&#39;);
+
+    // Ok, we&#39;re good to go, update offset
+    this.mov(&#39;rbx&#39;, this.ptr(offset));
+    this.mov([&#39;rbx&#39;], &#39;rcx&#39;);
+
+    // First 64bit pointer is reserved for &#39;tag&#39;,
+    // second one is a `double` value
+    this.mov(&#39;rcx&#39;, tag);
+    this.mov([&#39;rax&#39;], &#39;rcx&#39;);
+
+    // !!!!!!!!!!!!!!!
+    // ! Tag pointer !
+    // !!!!!!!!!!!!!!!
+    this.or(&#39;rax&#39;, 1);
+
+    // Return &#39;rax&#39;
+    this.Return();
+
+    // Overflowed :(
+    this.bind(&#39;overflow&#39;)
+
+    // Invoke javascript function!
+    // NOTE: This is really funky stuff, but I&#39;m not
+    // going to dive deep into it right now
+    this.runtime(function() {
+      console.log(&#39;GC is needed, but not implemented&#39;);
+    });
+
+    // Crash
+    this.int3();
+
+    this.Return();
+  });
+});
+</code></pre>
+<h2 id="math-stubs">Math stubs</h2>
+<p>Also, as we&#39;re going to do a bit more book-keeping in math operations to support
+both SMIs and doubles, let&#39;s split it apart and put the code, handling doubles
+into the stub:</p>
+<pre><code class="lang-javascript">var operators = [&#39;+&#39;, &#39;-&#39;, &#39;*&#39;, &#39;/&#39;];
+var map = { &#39;+&#39;: &#39;addsd&#39;, &#39;-&#39;: &#39;subsd&#39;, &#39;*&#39;: &#39;mulsd&#39;,
+            &#39;/&#39;: &#39;divsd&#39; };
+
+// Define `Binary+`, `Binary-`, `Binary*`, and `Binary/` stubs
+operators.forEach(function(operator) {
+  stubs.define(&#39;Binary&#39; + operator, function(left, right) {
+    // Save &#39;rbx&#39; and &#39;rcx&#39;
+    this.spill([&#39;rbx&#39;, &#39;rcx&#39;], function() {
+      // Load arguments to rax and rbx
+      this.mov(&#39;rax&#39;, left);
+      this.mov(&#39;rbx&#39;, right);
+
+      // Convert both numbers to doubles
+      [[&#39;rax&#39;, &#39;xmm1&#39;], [&#39;rbx&#39;, &#39;xmm2&#39;]].forEach(function(regs) {
+        var nonSmi = this.label();
+        var done = this.label();
+
+        this.checkSmi(regs[0]);
+        this.j(&#39;nz&#39;, nonSmi);
+
+        // Convert integer to double
+        this.untagSmi(regs[0]);
+        this.cvtsi2sd(regs[1], regs[0]);
+
+        this.j(done);
+        this.bind(nonSmi);
+
+        this.movq(regs[1], this.heapOffset(regs[0], 0));
+        this.bind(done);
+      }, this);
+
+      var instr = map[operator];
+
+      // Execute binary operation
+      if (instr) {
+        this[instr](&#39;xmm1&#39;, &#39;xmm2&#39;);
+      } else {
+        throw new Error(&#39;Unsupported binary operator: &#39; +
+                        operator);
+      }
+
+      // Allocate new number, and put value in it
+      // NOTE: Last two arguments are arguments to
+      // the stub (`size` and `tag`)
+      this.stub(&#39;rax&#39;, &#39;Alloc&#39;, 8, 1);
+      this.movq(this.heapOffset(&#39;rax&#39;, 0), &#39;xmm1&#39;);
+    });
+
+    this.Return();
+  });
+});
+</code></pre>
+<p>Note that this stub also converts all incoming numbers to doubles.</p>
+<h2 id="compiler">Compiler</h2>
+<p>And back to the compiler&#39;s code:</p>
+<pre><code class="lang-javascript">function visitProgram(ast) {
+  assert.equal(ast.body.length,
+               1,
+               &#39;Only one statement programs are supported&#39;);
+  assert.equal(ast.body[0].type, &#39;ExpressionStatement&#39;);
+
+  // We&#39;ve a pointer in &#39;rax&#39;, convert it to integer
+  visit.call(this, ast.body[0].expression);
+
+  // Get floating point number out of heap number
+  this.checkSmi(&#39;rax&#39;, function() {
+    // Untag smi
+    this.untagSmi(&#39;rax&#39;);
+  }, function() {
+    this.movq(&#39;xmm1&#39;, this.heapOffset(&#39;rax&#39;, 0));
+
+    // Round it towards zero
+    this.roundsd(&#39;zero&#39;, &#39;xmm1&#39;, &#39;xmm1&#39;);
+
+    // Convert double to integer
+    this.cvtsd2si(&#39;rax&#39;, &#39;xmm1&#39;);
+  });
+}
+
+function visitLiteral(ast) {
+  assert.equal(typeof ast.value, &#39;number&#39;);
+
+  if ((ast.value | 0) === ast.value) {
+    // Small Integer (SMI), Tagged value
+    // (i.e. val * 2) with last bit set to
+    // zero
+    this.mov(&#39;rax&#39;, utils.tagSmi(ast.value));
+  } else {
+    // Allocate new heap number
+    this.stub(&#39;rax&#39;, &#39;Alloc&#39;, 8, 1);
+
+    // Save &#39;rbx&#39; register
+    this.spill(&#39;rbx&#39;, function() {
+      this.loadDouble(&#39;rbx&#39;, ast.value);
+
+      // NOTE: Pointers have last bit set to 1
+      // That&#39;s why we need to use &#39;heapOffset&#39;
+      // routine to access it&#39;s memory
+      this.mov(this.heapOffset(&#39;rax&#39;, 0), &#39;rbx&#39;);
+    });
+  }
+}
+
+function visitBinary(ast) {
+  // Preserve &#39;rbx&#39; after leaving the AST node
+  this.spill(&#39;rbx&#39;, function() {
+    // Visit left side of expresion
+    visit.call(this, ast.right);
+
+    // Move it to &#39;rbx&#39;
+    this.mov(&#39;rbx&#39;, &#39;rax&#39;);
+
+    // Visit right side of expression (the result is in &#39;rax&#39;)
+    visit.call(this, ast.left);
+
+    //
+    // So, to conclude, we&#39;ve left side in &#39;rax&#39; and right in &#39;rbx&#39;
+    //
+
+    if (ast.operator === &#39;/&#39;) {
+      // Call stub for division
+      this.stub(&#39;rax&#39;, &#39;Binary&#39; + ast.operator, &#39;rax&#39;, &#39;rbx&#39;);
+    } else {
+      this.labelScope(function() {
+        // Check if both numbers are SMIs
+        this.checkSmi(&#39;rax&#39;);
+        this.j(&#39;nz&#39;, &#39;call stub&#39;);
+        this.checkSmi(&#39;rbx&#39;);
+        this.j(&#39;nz&#39;, &#39;call stub&#39;);
+
+        // Save rax in case of overflow
+        this.mov(&#39;rcx&#39;, &#39;rax&#39;);
+
+        // NOTE: both &#39;rax&#39; and &#39;rbx&#39; are tagged at this
+        // point.
+        // Tags don&#39;t need to be removed if we&#39;re doing
+        // addition or subtraction. However, in case of
+        // multiplication result would be 2x bigger if
+        // we won&#39;t untag one of the arguments.
+        if (ast.operator === &#39;+&#39;) {
+          this.add(&#39;rax&#39;, &#39;rbx&#39;);
+        } else if (ast.operator === &#39;-&#39;) {
+          this.sub(&#39;rax&#39;, &#39;rbx&#39;);
+        } else if (ast.operator === &#39;*&#39;) {
+          this.untagSmi(&#39;rax&#39;);
+          this.mul(&#39;rbx&#39;);
+        }
+
+        // On overflow restore &#39;rax&#39; from &#39;rcx&#39; and invoke stub
+        this.j(&#39;o&#39;, &#39;restore&#39;);
+
+        // Otherwise return &#39;rax&#39;
+        this.j(&#39;done&#39;);
+        this.bind(&#39;restore&#39;);
+
+        this.mov(&#39;rax&#39;, &#39;rcx&#39;);
+
+        this.bind(&#39;call stub&#39;);
+
+        // Invoke stub and return heap number in &#39;rax&#39;
+        this.stub(&#39;rax&#39;, &#39;Binary&#39; + ast.operator, &#39;rax&#39;, &#39;rbx&#39;);
+
+        this.bind(&#39;done&#39;);
+      });
+    }
+  });
+}
+
+function visitUnary(ast) {
+  if (ast.operator === &#39;-&#39;) {
+    // Negate argument by emulating binary expression
+    visit.call(this, {
+      type: &#39;BinaryExpression&#39;,
+      operator: &#39;*&#39;,
+      left: ast.argument,
+      right: { type: &#39;Literal&#39;, value: -1 }
+    })
+  } else {
+    throw new Error(&#39;Unsupported unary operator: &#39; + ast.operator);
+  }
+}
+</code></pre>
+<p>To conclude, we are now working with SMIs by default, inlining all operations
+for the speed&#39;s sake, and falling back to the doubles in case of overflow or any
+other trouble, like trying to sum a double and a SMI!</p>
+<p>That&#39;s all for now, see you here next time! Here is the full compiler code from
+this article: <a href="https://github.com/indutny/jit.js/tree/master/example/heap-smi-and-double">github</a>. Please try cloning, running and playing with it!
+Hope you enjoyed this post.</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

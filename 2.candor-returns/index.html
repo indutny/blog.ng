@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Candor returns</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Candor returns</h1>
+          <span class=post-header-date>Tue Nov 20 2012 19:00:00 GMT-0500 (Eastern Standard Time)</span>
+        </section>
+
+        <section class=post-body>
+          <p>Before I start diving into the deep sea of compiler internals, I would like to
+familiarize you with the <a href="https://github.com/indutny/candor">Candor</a> programming language and its Virtual
+Machine.</p>
+<p>This is the thing I was working on last 10 months, and one of the most wonderful
+and complex things I&#39;ve been working on since the start of my software
+development career.</p>
+<p>Candor is an Ecmascript-inspired language, but while the newer versions of the
+Ecmascript standard are adding new functionality and syntax features, my
+language aims to make the syntax as simple as possible.</p>
+<h3 id="no-exceptions">No exceptions</h3>
+<p>Caller can always be sure that function will return after the call. You should
+either invoke a callback with an error argument, return negative number on
+error, or do anything else to let caller know about errors that has happened.</p>
+<h3 id="no-undefined-and-null">No undefined and null</h3>
+<p>There is the only one value and type that represents undefined value - <code>nil</code>.
+Thus, less checks and a more understandable behaviour of your application.</p>
+<h3 id="no-implicit-global-variables">No implicit global variables</h3>
+<p>Every global variable access should be done explicitly, by loading/storing
+properties of the <code>global</code> object. To my mind, it&#39;s the most simplest and
+powerful way to prevent global leaks.</p>
+<h3 id="no-default-runtime">No default runtime</h3>
+<p>Candor has no default APIs that are doing &#39;high-level&#39; things with objects and
+arrays. These routines should be implemented by embedder (like <a href="https://github.com/indutny/candor.io">candor.io</a>).</p>
+<p>Removing runtime from VM is good in terms of support, less dependencies - less
+things to care about, and leaving things out of the core keeps it compact.</p>
+<h3 id="no-prototype-chains">No prototype chains</h3>
+<p>Objects are just magic-less hash-maps without special properties like
+<code>toString</code> or <code>__proto__</code>. Additionally you can have both numeric and string
+keys in objects (in other words, <code>a[0]</code> and <code>a[&#39;0&#39;]</code> are not the same thing).</p>
+<p>Also there&#39;re no <code>length</code> property of array, it&#39;s replaced by <code>sizeof</code> keyword.
+Example: <code>sizeof [1,2,3] == 3</code> or even <code>sizeof &quot;string&quot;</code>.</p>
+<h3 id="no-complicated-type-coercion">No complicated type coercion</h3>
+<p>Objects, arrays and nil are always converted either to empty string or to zero,
+depending on type of another argument. For example, this lets you increment
+uninitialized variables without getting any errors or unexpected behaviour:
+<code>nil + 1 == 1</code>.</p>
+<h3 id="dart-like-function-syntax">Dart-like function syntax</h3>
+<p>No <code>function</code> keyword, yay! Just write:</p>
+<pre><code>function_name(arguments) {
+  //body
+}
+</code></pre><h2 id="syntax">Syntax</h2>
+<p>You can learn more about syntax and play with it on <a href="http://candor-lang.org/">the official website</a>.</p>
+<h2 id="compiler">Compiler</h2>
+<p>Since the <a href="https://github.com/indutny/candor/commit/f3b1ebf3a839e32fcafa14b21af3">start of this year</a> I have been working on delivering very
+primitive JIT compiler and VM for Candor. The first version was generating
+pretty ugly machine code, which was ineffective and massive.</p>
+<p>It was using the following algorithm:</p>
+<ol>
+<li>Visit AST node.</li>
+<li>Generate all it&#39;s children, and place their results into <code>rax</code>, <code>rbx</code>, <code>rcx</code>
+(depending on child&#39;s index). (Just in case - <a href="http://en.wikipedia.org/wiki/X86-64">x86-64</a>)</li>
+<li>Generate code that calculates the result of operation and return value in
+<code>rax</code>.</li>
+</ol>
+<p>Pros - fast compilation, easy to understand algorithm. Cons - hard way to deal
+with different CPU architectures (i.e. it needed more than 6 registers), dumb
+generated machine code.</p>
+<p>Thanks to <a href="https://code.google.com/p/v8/">v8</a> and <a href="http://www.dartlang.org/">Dart</a> hacker <a href="http://mrale.ph/">Vyacheslav Egorov</a> and
+<a href="http://wingolog.org/">Andy Wingo&#39;s blog</a>, I&#39;ve figured out that <a href="https://github.com/indutny/candor/wiki/Compiler-papers">there&#39;re much better ways</a> to
+do JIT code generation, but it was too complex for me to understand at that
+time. And despite I&#39;ve created new branch <code>feature-ssa</code> and written tons of
+code, I&#39;ve never got something truly working.</p>
+<p>I got stuck at implementing registry allocator, mostly because of wrong design
+decisions that I made before, and continuing development of this branch in this
+form was impossible.</p>
+<p>That&#39;s why I took a long break (for almost 6 months) and worked on other
+projects, until I realized how this thing should be implemented.</p>
+<h2 id="candor-returns">Candor returns</h2>
+<p>After this pause I&#39;ve considered many things and finally did it. Even more,
+Candor now has two compilers: non-optimizing and optimizing. The non-optimizing
+is used where it needs to compile a lot of source as fast as possible, and the
+optimizing compiler is used for small functions that might be quickly optimized.</p>
+<p>Main things that helped me to got to this state:</p>
+<ol>
+<li>Understanding how <a href="http://en.wikipedia.org/wiki/Control_flow_graph">CFG</a> and <a href="http://en.wikipedia.org/wiki/Static_single_assignment_form">SSA</a> should be really handled and
+represented. CFG is a way to represent tree of input source code (AST) in a
+linear form, by placing instructions in blocks and connecting them with the
+control-flow edges like: goto and branch (which is used in <code>if</code> and <code>while</code>
+statements). What I was missing is that the instruction and it&#39;s value should
+be the same object, otherwise it&#39;s very problematic to exploit
+<a href="http://en.wikipedia.org/wiki/Use-define_chain">def-use chains</a>, which are very useful for getting type information and
+performing dead code elimination.</li>
+<li>I was detecting variable conflicts in the blocks with two incoming
+edges in a over-complicated way. I was using lists of active variables and
+performing very complex analysis to propagate them to blocks that needed
+them. Apparently, it&#39;s very cool and simple to do it in a way v8 does it. By
+creating environment for each basic block in CFG, placing variables into it
+and copying it as-it-is when adding successor to the block.</li>
+<li>I didn&#39;t understand that low-level intermediate representation should
+operate on <code>uses</code> which a parts of variable&#39;s liveness intervals... Previous
+version was doing simplified linear-scan register allocation without holes in
+variable&#39;s liveness intervals, which isn&#39;t resulting in good allocation.</li>
+</ol>
+<p>The main difference between optimizing and non-optimizing compiler is that the
+former is trying to place everything in registers, while the latter operates
+only on the stack slots (i.e. doing memory access on every variable load and
+store).</p>
+<p>By having a register allocator that&#39;s capable of allocating registers in very
+generic terms, it was really straightforward to add support for a 32bit code
+generation. And now Candor is officially running on two platforms: ia32 and x64.</p>
+<h2 id="plans">Plans</h2>
+<p>Now that there are two brand new compilers, I&#39;m going to work on adaptive
+optimization/deoptimization for it. Candor should be capable of optimizing
+hot functions on the fly and inlining small functions into their callers. Also,
+it&#39;s quite practical to generate code that&#39;s very fast in common cases, and
+falls back to unoptimized code in all other cases.</p>
+<p>ARM support is also the part of my future plans for Candor, and I&#39;ll start 
+working on it as soon as I&#39;ll receive my Raspberry PI.</p>
+<h2 id="more-info">More info</h2>
+<p>If you want to ask questions and/or learn more about Candor you can subscribe to
+our <a href="https://groups.google.com/forum/?fromgroups&amp;hl=en#!forum/candorlang">google group</a> or join the #candor IRC channel on freenode.</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

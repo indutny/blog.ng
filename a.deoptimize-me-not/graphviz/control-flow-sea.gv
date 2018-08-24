@@ -1,0 +1,82 @@
+digraph {
+node [fontsize=8,height=0.25]
+rankdir="TB"
+ranksep="1.2 equally"
+overlap="false"
+splines="true"
+concentrate="true"
+subgraph cluster0 {
+  label = "b0"
+  color = "red"
+  N0 [
+    shape="record"
+    label="{{<CS>|<S> i0 = start}}"
+  ]
+  N4 [
+    shape="record"
+    label="{{<CS>|<C0> ^i0|<S> i4 = jump}}"
+  ]
+}
+subgraph cluster1 {
+  label = "b1"
+  N5 [
+    shape="record"
+    label="{{<CS>|<C0> ^i4|<C1> ^i17|<S> i5 = region}}"
+  ]
+  N6 [
+    shape="record"
+    label="{{<CS>|<C0> ^i5|<S> i6 = ssa\:phi|<I0> i1|<I1> i14}}"
+  ]
+  N7 [
+    shape="record"
+    label="{{<CS>|<C0> ^i6|<S> i7 = ssa\:phi|<I0> i2|<I1> i16}}"
+  ]
+  N10 [
+    shape="record"
+    label="{{<CS>|<C0> ^i7|<S> i10 = if|<I0> i9}}"
+  ]
+}
+subgraph cluster2 {
+  label = "b2"
+  N11 [
+    shape="record"
+    label="{{<CS>|<C0> ^i10|<S> i11 = region}}"
+  ]
+  N12 [
+    shape="record"
+    label="{{<CS>|<C0> ^i11|<S> i12 = checkIndex|<I0> i3|<I1> i7}}"
+  ]
+  N13 [
+    shape="record"
+    label="{{<CS>|<C0> ^i12|<S> i13 = load|<I0> i3|<I1> i7}}"
+  ]
+  N17 [
+    shape="record"
+    label="{{<CS>|<C0> ^i11|<S> i17 = jump}}"
+  ]
+}
+subgraph cluster3 {
+  label = "b3"
+  color = "blue"
+  N18 [
+    shape="record"
+    label="{{<CS>|<C0> ^i10|<S> i18 = region}}"
+  ]
+  N19 [
+    shape="record"
+    label="{{<CS>|<C0> ^i18|<S> i19 = exit}}"
+  ]
+}
+N0:CS -> N4:C0 [dir=back, style=dashed]
+N4:CS -> N5:C0 [dir=back, style=dashed]
+N17:CS -> N5:C1 [dir=back, style=dashed]
+N5:CS -> N6:C0 [dir=back, style=dashed]
+N6:CS -> N7:C0 [dir=back, style=dashed]
+N7:CS -> N10:C0 [dir=back, style=dashed]
+N10:CS -> N11:C0 [dir=back, style=dashed]
+N11:CS -> N12:C0 [dir=back, style=dashed]
+N12:CS -> N13:C0 [dir=back, style=dashed]
+N11:CS -> N17:C0 [dir=back, style=dashed]
+N10:CS -> N18:C0 [dir=back, style=dashed]
+N18:CS -> N19:C0 [dir=back, style=dashed]
+}

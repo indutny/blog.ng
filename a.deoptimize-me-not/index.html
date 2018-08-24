@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Deoptimize me not, v8</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Deoptimize me not, v8</h1>
+          <span class=post-header-date>Sun Dec 14 2014 19:00:00 GMT-0500 (Eastern Standard Time)</span>
+        </section>
+
+        <section class=post-body>
+          <p>Compilers are awesome, right? If any programming concept may exist, it will
+probably be used in compiler implementation at some point. I am always amazed
+by my findings during v8 bug triaging or just random code exploration.</p>
+<p>The interesting thing about v8 that I was always passionate about, but never
+truly understood, was the Deoptimizer. The idea here is that v8 optimizes
+code to make it run faster, but this optimization relies on assumptions
+about types, ranges, actual values, const-ness, etc. These assumptions imply
+that the optimized code won&#39;t run when these conditions are not met,
+since the compiler needs to &quot;deoptimize&quot; it by returning to the previous
+&quot;no-assumptions&quot; version of generated code when the assumptions are failing.</p>
+<p>Technically it means that the compiler is in fact two compilers:
+a base compiler and an &quot;optimizer&quot;. (Or even more, if we are talking about JSC
+and SpiderMonkey). The concept is quite sound and can yield incredible
+performance, but there is a nuance: the optimized code may be &quot;deoptimized&quot; in
+various places, not just at the entry point, meaning that the environment (local
+variables, arguments, context) should be mapped and moved around.</p>
+<h2 id="stack-machines">Stack machines</h2>
+<p>To better understand what needs to be done and how things are happening let&#39;s
+consider a basic stack machine, like the one that we might use to interpret
+program instead of JIT compiling it.</p>
+<p><em>Note that this stack machine and assembly below are just an output of some
+abstract compiler and has nothing do to with v8. Thus here only for
+demonstration purposes</em></p>
+<pre><code>push a
+push b
+push c
+mul     ; pop 2 values and push `arg0 * arg1`
+push d
+mul     ; b * c * d
+add     ; pop 2 values and push `arg0 + arg`
+ret     ; pop and return value
+</code></pre><p>The interpreter will execute instructions one-by-one, maintaining the stack at
+every point.</p>
+<p>Now we let&#39;s imagine some register machine (like x86_64), and write down
+the same program in assembly language. To make it a bit more interesting,
+consider that the target architecture has only two registers and the rest of the
+values need to be stored in memory (on-stack).</p>
+<pre><code class="lang-asm">mov [slot0], a   ; store value in 0 memory slot
+mov rax, b       ; store value in rax register
+mov rbx, c       ; store value in rbx register
+mul rax, rbx     ; rax = rax * rbx
+mov rbx, d
+mul rax, rbx     ; rax = b * c * d
+mov rbx, [slot0] ; load value from 0 memory slot
+add rax, rbx     ; rax = b * c * d + a
+</code></pre>
+<p>The instructions are executed one-by-one, maintaining the register values and
+memory slots.</p>
+<p>In terms of our compiler, the former code is an unoptimized version of our
+program, and the latter one is optimized. In fact, this is a completely valid
+claim if we would like to run it on x86_64 platform, as assembly has much higher
+execution speed than interpreted code that needs to be emulated.</p>
+<p>Suppose that the second <code>mul</code> instruction in assembly works only when the <code>d</code>
+(which is in <code>rbx</code> register) is a small integer. Now if the execution will
+reach the <code>mul</code> and find that there is a JavaScript string, it will just fail
+to do the &quot;right thing&quot;. This <code>mul(num, str)</code> operation will definitely require
+some sort of type coercion, and could be easily handled by the interpreter.
+Doing it in assembly will very likely be much more costly in terms of
+performance. To deal with this the compiler inserts check instructions:</p>
+<pre><code>mov [slot0], a
+mov rax, b
+mov rbx, c
+checkSmallInt rax
+checkSmallInt rbx
+mul rax, rbx
+mov rbx, d
+checkSmallInt rax
+checkSmallInt rbx
+mul rax, rbx ;
+mov rbx, [slot0]
+add rax, rbx
+</code></pre><p>So in such an uncommon case, where the argument of <code>mul</code> is not a small integer,
+this code should somehow be &quot;deoptimized&quot; from assembly code to the stack
+machine and continue execution in the interpreted version. Here is the position
+in the optimized code where it will stop:</p>
+<pre><code>mov [slot0], a
+mov rax, b
+mov rbx, c
+checkSmallInt rax
+checkSmallInt rbx
+mul rax, rbx
+mov rbx, d
+checkSmallInt rax
+checkSmallInt rbx &lt;-----
+mul rax, rbx ;
+mov rbx, [slot0]
+add rax, rbx
+</code></pre><p>...and position in unoptimized code, where would like it to continue:</p>
+<pre><code>push a
+push b
+push c
+mul
+push d
+mul     ; &lt;-----
+add
+ret
+</code></pre><p>How could it do that? The simplest way is just to re-execute all code from the
+program&#39;s entry point using the input arguments. This solution is very limited
+though, because it is possible only if the optimized function was pure, or in
+other words had no instructions with side effects (like function calls, etc...).</p>
+<p>The more general solution is to find all live values (the ones that may be used
+by later functions) at the deoptimization point, find their locations in both
+optimized and unoptimized code, and copy the values from the registers/memory
+to stack machine&#39;s slot.</p>
+<p>This is exactly what the &quot;deoptimizer&quot; in v8 does. The main difference from our
+imaginary example is that both unoptimized and optimized codes are in <code>x86_64</code>
+assembly language.</p>
+<h2 id="simulates">Simulates</h2>
+<p>Now we know what to do, but how is it actually implemented in v8?</p>
+<p>These mappings are possible thanks to the special high-level instructions called
+<code>Simulate</code>s. This is how they look in the v8&#39;s high-level intermediate
+representation (abbr. IR, see my <a href="https://www.youtube.com/watch?v=tf6YTgO6Org">EmpireNode talk</a> for more info on the IRs):</p>
+<pre><code>v9 BlockEntry  &lt;|@
+v10 Simulate id=3 var[3] = t8 &lt;|@
+v11 StackCheck  changes[NewSpacePromotion] &lt;|@
+v12 UseConst t8 &lt;|@
+t13 ThisFunction  &lt;|@
+t14 CheckNonSmi t3 &lt;|@
+t15 CheckMaps t3 [0x2e26d7019781] &lt;|@
+v16 CheckPrototypeMaps [...] &lt;|@
+v17 Simulate id=24 push t3, push t4, push t8, var[3] = t13 &lt;|@
+v18 EnterInlined middle, id=4 &lt;|@
+t54 PushArgument t3 &lt;|@
+t55 PushArgument t4 &lt;|@
+t56 ArgumentsElements  &lt;|@
+v19 UseConst t1 &lt;|@
+t20 Constant ... &lt;|@
+v25 Simulate id=26 pop 1, push t19, var[3] = t2, var[4] = t20 &lt;|@
+</code></pre><p>(Note that you can obtain such IR by running node.js with <code>--trace-hydrogen</code>
+flag, which will print it out into the <code>hydrogen.cfg</code> or <code>hydrogen-&lt;pid&gt;.cfg</code>
+file).</p>
+<p>The thing is called <code>Simulate</code> with good reason. Strip away all other
+instructions:</p>
+<pre><code>v10 Simulate id=3 var[3] = t8 &lt;|@
+v17 Simulate id=24 push t3, push t4, push t8, var[3] = t13 &lt;|@
+v25 Simulate id=26 pop 1, push t19, var[3] = t2, var[4] = t20 &lt;|@
+</code></pre><p>...and we will see something that resembles... our simplified stack machine!
+Having a stack machine means that we could &quot;simulate&quot; it&#39;s state by executing
+instructions one-by-one. v8&#39;s has a couple of them:</p>
+<ul>
+<li><code>var[index] = value</code> - put a value in some on-stack slot</li>
+<li><code>push value</code> - push a value to a virtual stack</li>
+<li><code>pop count</code> - pop <code>count</code> of values from the stack</li>
+</ul>
+<p>Let&#39;s simulate some states out of the above sample:</p>
+<pre><code>v10: var = { 3: t8 }, stack = []
+v17: var = { 3: t13 }, stack = [ t3, t4, t8 ]
+v25: var = { 3: t13, 4: t20 }, stack = [ t3, t4, t19 ]
+</code></pre><p><em>Note that this &quot;simulation&quot; happens at compile-time, not when actually
+deoptimizing.</em></p>
+<p>These states can be used to map the values from optimized to unoptimized code.
+For example, if we would like to &quot;deoptimize&quot; at <code>t56</code>, we will have to find the
+latest state which was at <code>v17</code>: <code>var = { 3: t13 }, stack = [ t3, t4, t8 ]</code>, and
+just place the present values into a proper stack slots and local variables (for
+<code>var</code> ones).</p>
+<p>With the <code>--trace-deopt</code> flag v8 will give us some insights on how it is doing
+this:</p>
+<pre><code>**** DEOPT: outer at bailout #14, address 0x0, frame size 56
+[deoptimizing: begin 0x341ad2082a49 outer @14]
+translating outer =&gt; node=24, height=8
+0x7fff5fbff3e8: [top + 72] &lt;- 0xb7720f7d8b9 ; [sp + 96] 0xb7720f7d8b9 &lt;an O&gt;
+0x7fff5fbff3e0: [top + 64] &lt;- 0xb7720f7d8b9 ; rbx 0xb7720f7d8b9 &lt;an O&gt;
+0x7fff5fbff3d8: [top + 56] &lt;- 0x21ba55263fa9 ; caller&#39;s pc
+0x7fff5fbff3d0: [top + 48] &lt;- 0x7fff5fbff410 ; caller&#39;s fp
+0x7fff5fbff3c8: [top + 40] &lt;- 0xb7720f7d479; context
+0x7fff5fbff3c0: [top + 32] &lt;- 0x341ad2082ad9; function
+0x7fff5fbff3b8: [top + 24] &lt;- 0x341ad2004121 &lt;undefined&gt; ; literal
+0x7fff5fbff3b0: [top + 16] &lt;- 0x341ad2082ad9 &lt;JS Function inner&gt; ; literal
+0x7fff5fbff3a8: [top + 8] &lt;- 0xb7720f7d8b9 ; [sp + 24] 0xb7720f7d8b9 &lt;an O&gt;
+0x7fff5fbff3a0: [top + 0] &lt;- 0x341ad2004121 ; rax 0x341ad2004121 &lt;undefined&gt;
+</code></pre><p>Arrows here indicate the direction of movement. The output frame of the
+unoptimized code is on the left side, and on the right side - optimized code&#39;s
+values.</p>
+<p>The mentioned frame is an on-stack structure used for storing the caller address
+(to make <code>return</code> statements work), caller&#39;s frame address, and sometimes some
+additional stuff (like JS context, <code>this</code>, arguments, and the function itself):</p>
+<p><img src="/images/callstack.png" alt="Callstack"></p>
+<p>Ignoring all the internal frame things, the interesting part would be:</p>
+<pre><code>translating outer =&gt; node=24, height=8
+0x7fff5fbff3a8: [top + 8] &lt;- 0xb7720f7d8b9 ; [sp + 24] 0xb7720f7d8b9 &lt;an O&gt;
+0x7fff5fbff3a0: [top + 0] &lt;- 0x341ad2004121 ; rax 0x341ad2004121 &lt;undefined&gt;
+</code></pre><p>The high-level IR of the code that generated this trace contained:</p>
+<pre><code>0 0 v10 Simulate id=3 var[3] = t8 &lt;|@
+...
+0 0 v17 Simulate id=24 push t3, push t4 &lt;|@
+</code></pre><p>There is only one simulate instruction, and the state is: <code>stack = [t3, t4]</code>.
+(Sorry ignoring the local variables for this blog post).
+Thus, the deoptimizer needs to put the values of the <code>t3</code> and <code>t4</code> instructions
+into the stack slots. This information was stored ahead of time, and will be
+looked up right when deoptimizing the code. Here, <code>t3</code> was in the <code>[sp + 24]</code>
+stack slot in the optimized code, and <code>t4</code> was in <code>rax</code>. This process is called
+a &quot;frame translation&quot;. Afterwards the execution will be redirected to the
+unoptimized code, which will just continue operating on the values at the place
+where the optimized code has been &quot;deoptimized&quot;.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>The &quot;deoptimizer&quot; is really an interesting tool, and it is one of the main
+cogs in <a href="http://blog.chromium.org/2010/12/new-crankshaft-for-v8.html">Crankshaft</a>&#39;s engine. This instrument helps the compiler in
+executing the dynamic-language code as if it had been written in C++, because
+it can always return to the slow unoptimized code with &quot;true&quot; JavaScript
+semantics.</p>
+<p><em>Note that things are a bit more tricky with inlined functions, but this is a
+topic for another blog post.</em></p>
+<p><em>Big kudos to</em>:</p>
+<ul>
+<li><em>Vyacheslav Egorov</em></li>
+<li><em>Ben Noordhuis</em></li>
+<li><em>Jeremiah Senkpiel</em></li>
+</ul>
+<p><em>for proof-reading this and providing valuable feedback.</em></p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

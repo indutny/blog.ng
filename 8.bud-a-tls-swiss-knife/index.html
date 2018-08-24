@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Bud - a TLS &quot;swiss knife&quot;</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Bud - a TLS &quot;swiss knife&quot;</h1>
+          <span class=post-header-date>Wed Apr 02 2014 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="bud">Bud</h2>
+<p>To terminate TLS or not? Good question, but instead of answering it - I&#39;ll try
+to make you believe that if you need a TLS terminator - the <a href="http://github.com/indutny/bud">Bud</a> is just
+the right choice.</p>
+<h2 id="other-choices">Other choices</h2>
+<p>Certainly, there are some other choices for TLS termination like:</p>
+<ul>
+<li><a href="https://github.com/voxer/stud">stud</a></li>
+<li><a href="http://www.stunnel.org/">stunnel</a></li>
+<li><a href="http://nginx.org/">nginx</a> (though, not only a TLS terminator, but a web server too)</li>
+<li><a href="http://haproxy.1wt.eu/">haproxy</a> (much more than just a TLS terminator, but quite good!)</li>
+<li>...probably some others?</li>
+</ul>
+<p>However, in many cases <a href="http://github.com/indutny/bud">bud</a> could do their job as well as they do and also
+provide some unique features.</p>
+<h2 id="features">Features</h2>
+<h3 id="speed">Speed</h3>
+<p>Bud is as fast as all of it rivals, here are comparison of it to <a href="https://github.com/voxer/stud">stud</a>:</p>
+<p>Normal response:</p>
+<p><img src="/f/bud/normal-rps.png" alt="Normal RPS">
+<img src="/f/bud/normal-response.png" alt="Normal Response"></p>
+<p>Big response:</p>
+<p><img src="/f/bud/big-rps.png" alt="Big RPS">
+<img src="/f/bud/big-response.png" alt="Big Response"></p>
+<h3 id="asynchronous-sni-and-balancing">Asynchronous SNI and balancing</h3>
+<p>This is a killer feature for any serious PaaS offering an HTTPS access to the
+hosted applications. When enabled in configuration, on every incoming request
+bud will do an http query to receive a TLS certificate/key pair and an address
+of the backend to which this connection should be balanced.</p>
+<p>See <a href="https://github.com/indutny/bud#sni-storage">docs</a> for details.</p>
+<h3 id="asynchronous-ocsp-stapling">Asynchronous OCSP stapling</h3>
+<p>The same kind of thing could be used to perform <a href="http://en.wikipedia.org/wiki/OCSP_stapling">OCSP stapling</a>
+asynchronously, which is pretty useful if certificates are loaded dynamically
+and it isn&#39;t possible to store all of them in memory.</p>
+<p>See <a href="https://github.com/indutny/bud#ocsp-stapling">docs</a> for more details.</p>
+<p>All that asynchronous APIs are JSON based, so replying to such requests is as
+easy as possible for almost any platform (including node.js).</p>
+<h3 id="x-forwarded-for">X-Forwarded-For</h3>
+<p>The latest feature that I have implemented so far is an <code>x-forward</code> backend
+option. When enabled, bud will add <code>X-Forwarded-For</code> header to the first request
+of all incoming HTTP connections and send custom <code>X_FORWARD</code> frame for all
+<a href="http://en.wikipedia.org/wiki/SPDY">SPDY</a> connections.</p>
+<p>This custom <code>X_FORWARD</code> frame is already supported in <a href="https://www.npmjs.org/package/spdy">node-spdy@1.25.0</a> and
+will automatically add <code>X-Forwarded-For</code> header to all requests on that SPDY
+connection.</p>
+<p>The main pros of this method is that no actual protocol parsing is happening.
+The cons is that, in case of HTTP protocol, only first request gets this header
+added. This could be worked around by checking this header on incoming request
+and associating it with a underlying socket (<code>req.socket</code> in node.js.)</p>
+<h2 id="try-it-out-">Try it out!</h2>
+<p>Hearing all that awesome things - you may become interested in giving it a try,
+thanks to <a href="https://npmjs.org/">npm</a> it is quite simple:</p>
+<pre><code>npm install -g bud-tls
+</code></pre><p>Generating a configuration is easy too:</p>
+<pre><code>bud --default-config &gt; config.json
+vim config.json
+</code></pre><p>All this options are documented in the <a href="https://github.com/indutny/bud#bud-">project&#39;s readme</a>.</p>
+<p>Just in case, this blog is running behind <a href="http://github.com/indutny/bud">bud</a>!</p>
+<h2 id="reporting-issues">Reporting issues</h2>
+<p>Something does not work as expected or just crashes? Please do not hesitate to
+report it on <a href="https://github.com/indutny/bud/issues">github issues</a>.</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

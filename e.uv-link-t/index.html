@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>uv_link_t - libuv pipeline</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>uv_link_t - libuv pipeline</h1>
+          <span class=post-header-date>Sun Aug 14 2016 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="preface">Preface</h2>
+<p>Writing servers/clients in C could be non-trivial. Even with the help of such
+powerful (and awesome dinosaur) libraries as <a href="https://github.com/libuv/libuv">libuv</a>, it still takes lots of
+effort and boilerplate code to create real world applications.</p>
+<p>Some of this boilerplate code comes from the use of the widespread protocols
+like TLS (SSL) and HTTP. While there are popular implementations available
+as an Open Source libraries (<a href="https://github.com/openssl/openssl">OpenSSL</a>, <a href="https://github.com/nodejs/http-parser">http-parser</a>), they still either
+provide very abstract interface (like <a href="https://github.com/nodejs/http-parser">http-parser</a>), or an API to transfer
+the responsibility of the networking to the library itself (like <code>SSL_set_fd()</code>
+in <a href="https://github.com/openssl/openssl">OpenSSL</a> and Amazon&#39;s <a href="https://github.com/awslabs/s2n">s2n</a>). Such abstract nature makes them easier
+to embed, but the adaptor code inevitably tend to appear in the particular
+applications.</p>
+<h2 id="precursor-streambase">Precursor - StreamBase</h2>
+<p><a href="https://github.com/libuv/libuv">libuv</a> is hardly an exception, and <a href="https://github.com/nodejs/node/blob/master/src/tls_wrap.cc">node.js</a> and <a href="https://github.com/indutny/bud/blob/master/src/client.c">bud</a>&#39;s TLS
+implementation is a vivid evidence of this. However, in a contrast to <a href="https://github.com/indutny/bud/blob/master/src/client.c">bud</a>,
+<a href="https://github.com/nodejs/node/blob/master/src/tls_wrap.cc">node.js</a> TLS code lives off on an abstraction called <a href="https://github.com/nodejs/node/blob/master/src/stream_base.h">StreamBase</a>. By
+separating <a href="https://github.com/libuv/libuv">libuv</a>-specific adaptor code into a generic C++ class, we have
+created a foundation for a simpler and reusable implementation of any other
+protocol! See, for example, recent <a href="https://github.com/nodejs/node/blob/29228c4089431d0e65749421f43aafd05694f376/src/node_http_parser.cc#L472-L486">node_http_parser.cc</a> which uses only
+a minor amount of power available through the means of <a href="https://github.com/nodejs/node/blob/master/src/stream_base.h">StreamBase</a>, but
+nevertheless provides <a href="https://github.com/nodejs/node/pull/2355">10-20%</a> performance improvement since its inception.</p>
+<p>This implementation has some major drawbacks, preventing its wider adoption
+outside of the node.js core:</p>
+<ul>
+<li>C++ headers: lots of virtual classes, complex API, non-trivial inheritance
+scheme</li>
+<li>High internal dependence on the node.js core itself</li>
+</ul>
+<p>Because of these issues (and my own limitations) <a href="https://github.com/nodejs/node/blob/master/src/stream_base.h">StreamBase</a> has defied all
+attempts to make it public.</p>
+<h2 id="uv_link_t">uv_link_t</h2>
+<p>Heavily inspired by the success of <a href="https://github.com/nodejs/node/blob/master/src/stream_base.h">StreamBase</a> in the node.js core, a
+<a href="https://github.com/indutny/uv_link_t">uv_link_t</a> library was created. It has lots of similarities with the
+<a href="https://github.com/nodejs/node/blob/master/src/stream_base.h">StreamBase</a>, but it is:</p>
+<ul>
+<li>Implemented in C: self-documented structures, C-cast based inheritance, etc</li>
+<li>Standalone library</li>
+</ul>
+<p>The API is based on the <a href="http://docs.libuv.org/en/v1.x/stream.html">uv_stream_t</a> and shouldn&#39;t come as a big surprise
+to the users, since <a href="https://github.com/indutny/uv_link_t">uv_link_t</a> is intended to be used together with
+<a href="https://github.com/libuv/libuv">libuv</a>.</p>
+<p>Here is a visual explanation of how <a href="https://github.com/libuv/libuv">uv_link_t</a> works:</p>
+<p><img src="/images/uv_link_source_t.svg" alt="uv_link_source_t"></p>
+<h2 id="examples">Examples</h2>
+<p>Before we take a peek at the APIs, let&#39;s discuss what can be done with
+<a href="https://github.com/indutny/uv_link_t">uv_link_t</a>. Technically, any stream-based (i.e. anything that uses
+<code>uv_stream-t</code>) protocol can be implemented on top of it. Multiple protocols can
+be chained together (that&#39;s why it is called <code>uv_</code><strong>link</strong><code>_t</code>!), provided that
+there is an implementation:</p>
+<p><code>TCP &lt;-&gt; TLS &lt;-&gt; HTTP &lt;-&gt; WebSocket</code>.</p>
+<p>This chaining works in a pretty transparent way, and every segment of it can be
+observed without disturbing the data flow and operation of the other links.</p>
+<p>Existing protocols:</p>
+<ul>
+<li><a href="https://github.com/indutny/uv_ssl_t">uv_ssl_t</a> - TLS, based on OpenSSL&#39;s API</li>
+<li><a href="https://github.com/indutny/uv_http_t">uv_http_t</a> - low-level HTTP/1.1 implementation, possibly incomplete</li>
+</ul>
+<p>Small demo-project:</p>
+<ul>
+<li><a href="https://github.com/indutny/file-shooter">file-shooter</a> - dumb-simple HTTPS server based on both <a href="https://github.com/indutny/uv_ssl_t">uv_ssl_t</a> and
+<a href="https://github.com/indutny/uv_http_t">uv_http_t</a></li>
+</ul>
+<p>Note that all these projects, including <a href="https://github.com/indutny/uv_link_t">uv_link_t</a> itself are supposed to
+be built with a <a href="https://github.com/gypkg/gypkg">gypkg</a>, which is a subject for a future blog post.</p>
+<h2 id="api">API</h2>
+<p>The backbone of the API is a <code>uv_link_t</code> structure:</p>
+<pre><code class="lang-c">#include &quot;uv_link_t.h&quot;
+
+static uv_link_methods_t methods = {
+  /* To be discussed below */
+};
+
+void _() {
+  uv_link_t link;
+
+  uv_link_init(&amp;link, &amp;methods);
+
+  /* ... some operations */
+  uv_link_close(&amp;link, close_cb);
+}
+</code></pre>
+<p>In the most of the cases a first link should be an <code>uv_link_source_t</code>. It
+consumes an instance of <code>uv_stream_t</code>, and propagates reads and writes from
+the whole chain of links connected to it.</p>
+<pre><code class="lang-c">uv_link_source_t source;
+
+uv_stream_t* to_be_consumed;
+uv_link_source_init(&amp;source, to_be_consumed);
+</code></pre>
+<p>As mentioned before, links can be chained together:</p>
+<pre><code class="lang-c">uv_link_t a;
+uv_link_t b;
+
+/* Initialize `a` and `b` */
+uv_link_chain(/* from */ a, /* to */ b);
+</code></pre>
+<p>This <code>uv_link_chain</code> call means that the data emitted by <code>a</code> will be passed as
+an input to <code>b</code>, and the output of <code>b</code> will written to <code>a</code>.</p>
+<p>Speaking of input/output, the API is pretty similar to <a href="https://github.com/libuv/libuv">libuv</a>&#39;s:</p>
+<pre><code class="lang-c">int uv_link_write(uv_link_t* link, const uv_buf_t bufs[],
+                  unsigned int nbufs, uv_stream_t* send_handle,
+                  uv_link_write_cb cb, void* arg);
+
+int uv_link_read_start(uv_link_t* link);
+int uv_link_read_stop(uv_link_t* link);
+
+void fn() {
+  link-&gt;alloc_cb = /* something */;
+  link-&gt;read_cb = /* something */;
+}
+</code></pre>
+<p>Please check the <a href="https://github.com/indutny/uv_link_t/blob/master/docs/api.md">API docs</a> for further information on particular methods
+and structures (likes <code>uv_link_source_t</code> and <code>uv_link_observer_t</code>).</p>
+<p>There is also an <a href="https://github.com/indutny/uv_link_t/blob/master/docs/implementation-guide.md">Implementation guide</a> for implementing custom types of
+<code>uv_link_t</code>.</p>
+<h2 id="error-reporting">Error reporting</h2>
+<p>Having multiple independent implementations of <code>uv_link_t</code> interface, it is a
+natural question to ask: how does <code>uv_link_t</code> handle error code conflict?</p>
+<p>The answer is that all error codes returned by <code>uv_link_...</code> methods are
+actually prefixed with the index of the particular link in a chain. Thus, even
+if there are several similar links in a chain, it is possible to get the pointer
+to the <code>uv_link_t</code> instance that have emitted it:</p>
+<pre><code class="lang-c">int uv_link_errno(uv_link_t** link, int err);
+const char* uv_link_strerror(uv_link_t* link, int err);
+</code></pre>
+<h2 id="foreword-gypkg">Foreword: gypkg</h2>
+<p><a href="https://github.com/gypkg/gypkg">gypkg</a> is recommended to be used when embedding <code>uv_link_t</code> in the C
+project. There are not too many source files to put into a <code>Makefile</code> or some
+other build file, but the convenience that <a href="https://github.com/gypkg/gypkg">gypkg</a> provides, pays off very
+quickly!</p>
+<h3 id="installation-node-js-v6-is-required-">Installation (node.js v6 is required):</h3>
+<pre><code class="lang-sh">npm install -g gypkg
+</code></pre>
+<h3 id="init">Init</h3>
+<pre><code class="lang-sh">mkdir project
+cd project
+gypkg init
+</code></pre>
+<h3 id="adding-uv_link_t-as-a-dependency">Adding <code>uv_link_t</code> as a dependency</h3>
+<pre><code class="lang-sh">vim project.gyp
+</code></pre>
+<pre><code class="lang-python">{
+  &quot;variables&quot;: {
+    &quot;gypkg_deps&quot;: [
+      &quot;git://github.com/libuv/libuv.git@^1.9.0 =&gt; uv.gyp:libuv&quot;,
+      &quot;git://github.com/indutny/uv_link_t@^1.0.0 [gpg] =&gt; uv_link_t.gyp:uv_link_t&quot;,
+    },
+  },
+
+  # Some other GYP things
+}
+</code></pre>
+<h3 id="building">Building</h3>
+<pre><code class="lang-sh">gypkg build
+ls -la out/Release
+</code></pre>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

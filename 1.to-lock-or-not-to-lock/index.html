@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>To lock, or not to lock</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>To lock, or not to lock</h1>
+          <span class=post-header-date>Wed Oct 10 2012 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h1 id="tl-dr">TL;DR</h1>
+<p>As I&#39;ve promised you in my <a href="http://blog.indutny.com/0.benchmarking-tls">previous post</a>, I made <a href="https://github.com/indutny/tlsnappy">TLSnappy</a> balance and
+handle requests a little bit better.</p>
+<h1 id="data-flow">Data flow</h1>
+<p>For leveraging all available CPUs TLSnappy runs multiple threads that are each
+picking and processing tasks from their dispatch queues, one by one. Tasks are
+created from node&#39;s event-loop in following cases:</p>
+<ul>
+<li>Data comes from client and should be decrypted</li>
+<li>Data from server should be encrypted</li>
+</ul>
+<p>So, as you can see, each thread is receiving data from it&#39;s inputs (either
+<code>encrypted</code> or <code>clear</code>) and/or emitting data to it&#39;s outputs. This pattern
+apparently requires a lot of data transfer <code>to</code> and <code>from</code> worker threads and
+requires storing (buffering) that data in some temporary storage before
+processing it.</p>
+<p>To my mind, best structure to fit this needs is <a href="http://en.wikipedia.org/wiki/Circular_buffer">Circular (Ring) buffer</a>.
+Because it&#39;s fast, can be grown if more than it&#39;s current capacity needs to be
+held.</p>
+<p>The <a href="https://github.com/indutny/tlsnappy/blob/old-ring/src/ring.h">Naive version</a> of it was good enough to try out things, but it wasn&#39;t
+supposed to be run in a multi-threaded concurrent environment - all access to
+this buffer can take place only in a <a href="http://en.wikipedia.org/wiki/Critical_section">critical section</a>. This means that at
+any time only one thread may access the ring&#39;s methods or properties. You might
+think that this doesn&#39;t make difference, but, according to <a href="http://en.wikipedia.org/wiki/Amdahl&#39;s_law">Amdahl&#39;s law</a>,
+reducing time spent in non-parallelizable (sequential) parts of application is
+much more critical for overall performance than speeding up parallel parts.</p>
+<h1 id="lock-less-ring-buffer">Lock-less ring buffer</h1>
+<p>Removing locks seemed to be essential for achieving better performance, however
+a special structure needs to be used in order to make a ring buffer work across
+multiple CPUs. Here is the structure I chose for it:</p>
+<p><img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/ring.png" alt="Ring buffer"></p>
+<p>Ring consists of pages that&#39;re forming circular linked list, each page has two
+offsets: reader (<code>roffset</code>) and writer (<code>woffset</code>). And there&#39;re two special
+pages (which could be the same one actually): reader head (<code>rhead</code>) and writer
+head (<code>whead</code>).</p>
+<p>Initially the ring contains only one page which is <code>rhead</code> and <code>whead</code> at the
+same time. When the producer wants to put data in - it goes to the <code>whead</code>,
+copies data into the page, increments <code>woffset</code> and if the page is full - it
+create a new page, or reuses an old one that doesn&#39;t contain any un-read data.
+Consumer takes <code>rhead</code> reads up to <code>woffset - roffset</code> bytes from it, increments
+<code>roffset</code> and moves to the next page if <code>roffset</code> is equal to the size of the
+page.</p>
+<p>So here are benchmarks:</p>
+<p>Without lock-less ring:</p>
+<pre><code>Transactions:                 200000 hits
+Availability:                 100.00 %
+Elapsed time:                  47.90 secs
+Data transferred:             585.37 MB
+Response time:                  0.02 secs
+Transaction rate:            4175.37 trans/sec
+Throughput:                    12.22 MB/sec
+Concurrency:                   98.79
+Successful transactions:      200000
+Failed transactions:               0
+Longest transaction:            0.09
+Shortest transaction:           0.00
+</code></pre><p>With lock-less ring:</p>
+<pre><code>Transactions:                 200000 hits
+Availability:                 100.00 %
+Elapsed time:                  47.37 secs
+Data transferred:             585.37 MB
+Response time:                  0.02 secs
+Transaction rate:            4222.08 trans/sec
+Throughput:                    12.36 MB/sec
+Concurrency:                   98.83
+Successful transactions:      200000
+Failed transactions:               0
+Longest transaction:            0.12
+Shortest transaction:           0.00
+</code></pre><p>As you can see, performance hasn&#39;t greatly improved and is actually almost
+beyond statistical error (which means that results are nearly the same). However
+these are results for small 3kb page, lets try sending some big 100kb buffers.</p>
+<p>Without lock-less ring:</p>
+<pre><code>Transactions:                 100000 hits
+Availability:                 100.00 %
+Elapsed time:                  64.06 secs
+Data transferred:            9536.74 MB
+Response time:                  0.06 secs
+Transaction rate:            1561.04 trans/sec
+Throughput:                   148.87 MB/sec
+Concurrency:                   98.59
+Successful transactions:      100000
+Failed transactions:               0
+Longest transaction:            1.93
+Shortest transaction:           0.00
+</code></pre><p>With lock-less ring:</p>
+<pre><code>Transactions:                 100000 hits
+Availability:                 100.00 %
+Elapsed time:                  58.73 secs
+Data transferred:            9536.74 MB
+Response time:                  0.06 secs
+Transaction rate:            1702.71 trans/sec
+Throughput:                   162.38 MB/sec
+Concurrency:                   98.98
+Successful transactions:      100000
+Failed transactions:               0
+Longest transaction:            0.19
+Shortest transaction:           0.00
+</code></pre><p>Wow! That&#39;s much better - about 9% performance improvement.</p>
+<h1 id="instruments">Instruments</h1>
+<p>Still TLSnappy&#39;s performance wasn&#39;t even close to what nginx is capable of
+(~5100 requests per second). Thus it was necessary to continue investigation and
+this is where <a href="https://developer.apple.com/library/mac/#documentation/DeveloperTools/Conceptual/InstrumentsUserGuide/Introduction/Introduction.html">Instruments.app</a> comes into play, which is basically an UI for some
+very useful dtrace scripts. I&#39;ve run the <code>CPU Sampler</code> utility and this is what
+the call tree looked like:
+<img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/original-node.png" alt="Original node"></p>
+<p>Obviously it spends almost 30% of time in synchronization between threads,
+particularly in <code>CRYPTO_add_lock</code> function:
+<img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/old-crypto-add-lock.png" alt="Old CRYPTO_add_lock"></p>
+<p>After modifying the code to use atomic operations, which are supported by almost
+every CPU nowadays):
+<img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/new-crypto-add-lock.png" alt="New CRYPTO_add_lock"></p>
+<p>Call tree locked like this:
+<img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/patched-node.png" alt="Patched node"></p>
+<h1 id="results">Results</h1>
+<p>I&#39;ve opened <a href="https://github.com/joyent/node/pull/4105">pull request for node.js</a> and sent the same patches to the
+openssl-dev mailing list. With patched node and latest tlsnappy these are the
+benchmark results:</p>
+<p><img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/tlsnappy-rps-2.png" alt="Requests per second">
+<img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/tlsnappy-load-2.png" alt="Average load"></p>
+<p>And that&#39;s without patches:</p>
+<p><img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/tlsnappy-rps-siege.png" alt="Requests per second">
+<img src="https://raw.github.com/indutny/tlsnappy/master/benchmark/tlsnappy-load-siege.png" alt="Average load"></p>
+<p>A little comment about curve names here:</p>
+<ul>
+<li><code>default</code> - one tlsnappy process with 16 threads</li>
+<li><code>hybrid</code> - 4 tlsnappy processes with 4 threads each</li>
+<li><code>cluster</code> - 16 tlsnappy processes with 1 thread each</li>
+<li><code>http</code> - 16 node.js processes in cluster</li>
+</ul>
+<p>The work is unfinished yet, but now I know that OpenSSL doesn&#39;t really behave
+well when used in multithreaded application.</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

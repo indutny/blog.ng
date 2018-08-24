@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Running node.js + DTrace on FreeBSD</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Running node.js + DTrace on FreeBSD</h1>
+          <span class=post-header-date>Mon Mar 31 2014 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="preface">Preface</h2>
+<p>Tracing node.js activity and detecting performance problems and bottlenecks
+has always been an important topic for many people in the community. Though,
+various ways to do this were available, including: systemtap, ETW and perfctr on
+Windows. The most complete tracing support was done by Joyent guys for the
+DTrace tool which works best on their <a href="http://wiki.illumos.org/display/illumos/illumos+Home">Illumos</a> fork, called <a href="http://smartos.org/">SmartOS</a>.</p>
+<p>Fortunately, since 9.0 version, FreeBSD maintainers have started fixing and
+tweaking their DTrace implementation too (which is actually a backport from
+Solaris). Considering that FreeBSD is much easier to install and is much
+more usable as a primary OS for developers, being able to do flamegraphs for
+node.js on it is something that I highly desired at the time.</p>
+<h2 id="what-was-broken">What was broken</h2>
+<p>Sadly, it wasn&#39;t working out-of-the-box. After the installation of FreeBSD in a
+VirtualBox has finished, I immediately tried to build and dtrace node with a
+<code>jstack()</code> utility (see my previous <a href="/3.dtrace-ustack-helper">blog post</a> on that topic), but it did
+not work out. After some struggling it became obvious that <code>/dev/dtrace/helper</code>
+has pretty narrow permissions and the node, running under non-root user, wasn&#39;t
+able to register itself within the system&#39;s DTrace module.</p>
+<p>Calling <code>sudo chmod 666 /dev/dtrace/helper</code> improved the situation, but not that
+much: version 0.11 of node.js was crashing, and version v0.10 was still not
+registering it&#39;s ustack helper and DTrace provider (see <a href="http://www.solarisinternals.com/wiki/index.php/DTrace_Topics_USDT#USDT">USDT</a> docs). This
+problem was a bit tougher than the helper permissions, and took awhile to fix.</p>
+<h2 id="how-node-interacts-with-dtrace">How node interacts with DTrace</h2>
+<p>First of all, a bit of information about how node.js compiles it&#39;s DTrace
+helpers and how they are used by the system. There were <a href="http://www.bsdcan.org/2008/schedule/attachments/60_dtrace_bsdcan.pdf">some slides</a> on that
+topic (how DTrace USDT interacts with kernel), but at that moment I figured it
+out by reading the implementation&#39;s source.</p>
+<p>There are two <code>.d</code> files in the node.js source tree: <code>src/node_provider.d</code> and
+<code>src/v8ustack.d</code>. The former declares a <code>node</code> DTrace USDT provider and the
+latter exports an ustack helper Both of these files are compiled with
+<code>dtrace -G -s &lt;file.d&gt; -o &lt;out.o&gt;</code>, which in fact does the following thing:</p>
+<ol>
+<li>Compile all D-language chunks into DIFs (<a href="https://github.com/freebsd/freebsd/blob/3ecc6f129801776dd571d69cf9a262a97ad23968/sys/cddl/contrib/opensolaris/uts/common/sys/dtrace.h#L112">DTrace Intermediate Format</a></li>
+<li>Encode them in the DOF (<a href="https://github.com/freebsd/freebsd/blob/3ecc6f129801776dd571d69cf9a262a97ad23968/sys/cddl/contrib/opensolaris/uts/common/sys/dtrace.h#L570">DTrace Object File</a>) format</li>
+<li>Put them into the special <code>._SUNW_dof</code> ELF section</li>
+<li>Link it to the internally-stored <code>drti.o</code>, providing <code>dtrace_dof_init</code> and
+<code>dtrace_dof_fini</code> helper functions.</li>
+</ol>
+<p>These functions are called on the executable&#39;s initialization and
+deinitialization (surprisingly!), each making an <code>ioctl()</code> syscall on the
+<code>/dev/dtrace/helper</code>. Specifically, <code>dtrace_dof_init()</code> loads and verifies the
+<code>._SUNW_dof</code> section of an ELF-file and registers it with-in the kernel.</p>
+<h2 id="how-i-fixed-it">How I fixed it</h2>
+<p>I decided to investigate the node.js v0.11 crashes. It was crashing on a
+<a href="https://github.com/freebsd/freebsd/blob/4d784918edbf9aefbab5ab12e4701d3104c3ff45/cddl/contrib/opensolaris/lib/libdtrace/common/drti.c#L110">this line</a>, so it was either an ELF symbol problem or a DOF string
+problem. Initially, I found that the DOF did not contain the STRTAB section
+that <code>dtri.o</code> was searching for, but it turned out to be a slightly bigger
+problem. Since node.js has two separate <code>.d</code> files, it has two DOFs for
+each of them in it&#39;s <code>._SUNW_dof</code> section, but the <code>drti.o</code> was loading only
+one! After all I came up with a following patch:</p>
+<script src="https://gist.github.com/indutny/d3fee964995eea206fb3.js"></script>
+
+<p>Although, node.js v0.11 has stopped crashing after applying it to the kernel
+source code and rebuilding <code>libdtrace</code>, it still wasn&#39;t registering an ustack
+helper and a provider (<code>sudo dtrace -l</code> did not contain any
+<code>node&lt;pid&gt;:::</code> probes).</p>
+<p>While reading <a href="https://github.com/freebsd/freebsd/blob/4d784918edbf9aefbab5ab12e4701d3104c3ff45/cddl/contrib/opensolaris/lib/libdtrace/common/drti.c#L52">FreeBSD&#39;s source code</a> further, I found an environment
+variable <code>DTRACE_DOF_INIT_DEBUG</code> that helped me to take a deeper look into
+what was happening for both node.js v0.10 and v0.11. After setting it to
+<code>DTRACE_DOF_INIT_DEBUG=1</code> node.js has started printing following things to the
+stderr:</p>
+<pre><code>dtrace DOF node: DTrace ioctl failed for DOF at 0x804c00000:
+Argument list too long
+</code></pre><p>This was totally uninformative, and I started grepping through a DTrace kernel
+module with a hope to find some clues to this errors. <code>Argument list too long</code>
+is a verbose description of the <code>E2BIG</code> errno, and luckily the <a href="https://github.com/freebsd/freebsd/blob/3ecc6f129801776dd571d69cf9a262a97ad23968/sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c#L11989">first place</a>
+where it is used was the place that I needed to fix. Basically, for the security
+purpose kernel limits the size of the DOF that could be loaded in it&#39;s memory.
+This limit is set to the 128 KB by default, and the node.js now has
+significantly bigger ustack helper (7 MB for v0.11). Instead of just raising it
+to a higher value, I decided to export <code>sysctl</code> variable to make it configurable
+without rebuilding the kernel. Running node again after this tweaks gave me:</p>
+<pre><code>dtrace DOF node: DTrace ioctl failed for DOF at 0x804c00000:
+Invalid argument
+</code></pre><p>This failure was even more vague, since it meant that the <code>EINVAL</code> was returned
+somewhere, and there was tons of places where it could have happened. After
+inserting tons of debug prints in all possible places in kernel, I have isolated
+it down to <a href="https://github.com/freebsd/freebsd/blob/3ecc6f129801776dd571d69cf9a262a97ad23968/sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c#L12462">this place</a>. Indeed, both of node DOFs contained a lot of
+actions and the default limit (16 * 1024) was way to small for it. Exporting
+another sysctl variable has solved all problems and running node.js has finally
+printed this:</p>
+<pre><code>dtrace DOF node: DTrace ioctl succeeded for DOF at 0x8052c2c2c
+dtrace DOF node: DTrace ioctl succeeded for DOF at 0x804c00000
+dtrace DOF node: found provider 0x8052c3000
+</code></pre><p>Just to confirm it, I checked the <code>dtrace -l</code> output and (yikes!) it was there
+too:</p>
+<pre><code>48986 node909 node ... gc-done
+48987 node909 node ... gc-start
+48988 node909 node ... http-client-request
+48989 node909 node ... http-client-response
+48990 node909 node ... http-server-request
+48991 node909 node ... http-server-response
+48992 node909 node ... net-server-connection
+48993 node909 node ... net-socket-read
+48994 node909 node ... net-socket-write
+48995 node909 node ... net-stream-end
+</code></pre><h2 id="how-to-apply-all-this-patches">How to apply all this patches</h2>
+<p>I have came up with <a href="https://github.com/indutny/freebsd/compare/release/10.0.0...feature/10.0-dtrace-patches">this instruction</a> for fixing your FreeBSD installation
+to make node.js DTrace helpers work. Just a brief in-line description:</p>
+<ol>
+<li>Apply <a href="https://github.com/indutny/freebsd/compare/release/10.0.0...feature/10.0-dtrace-patches">these patches</a> to <code>/usr/src</code></li>
+<li>Rebuild and install kernel:
+<code>sudo make buildkernel &amp;&amp; sudo make installkernel</code></li>
+<li>Reboot <code>sudo shutdown -r</code></li>
+<li>Raise sysctl limits:<ul>
+<li><code>sudo sysctl -w kern.dtrace.helper_actions_max=16000</code></li>
+<li><code>sudo sysctl -w kern.dtrace.dof_maxsize=8000000</code></li>
+</ul>
+</li>
+<li>Clone node.js:
+<code>git clone git://github.com/joyent/node &amp;&amp; cd node &amp;&amp; git checkout v0.10</code></li>
+<li>Configure it: <code>./configure --prefix=... --with-dtrace</code></li>
+<li>Build and install it: <code>gmake -j24 &amp;&amp; gmake install</code></li>
+<li>Make DTrace device accessible to non-root users:
+<code>sudo chmod 666 /dev/dtrace/helper</code></li>
+<li>Verify that node.js DTrace probes are inserted:
+<code>DTRACE_DOF_INIT_DEBUG=1 /path/to/node</code>.</li>
+</ol>
+<p>Thanks for reading this, and please let me know if any of these patches don&#39;t
+work for you!</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

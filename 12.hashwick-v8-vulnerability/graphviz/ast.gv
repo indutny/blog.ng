@@ -1,0 +1,71 @@
+digraph {
+  node [shape=record];
+
+  ForStatement -> init;
+  ForStatement -> test;
+  ForStatement -> update;
+  ForStatement -> body;
+
+  init -> VariableDeclaration;
+  VariableDeclaration -> VariableDeclarator0;
+  VariableDeclaration -> VariableDeclarator1;
+
+  VariableDeclarator0 -> id_0;
+  VariableDeclarator0 -> init_0;
+  id_0 -> Identifier0;
+  init_0 -> Literal0;
+
+  VariableDeclarator1 -> id_1;
+  VariableDeclarator1 -> init_1;
+  id_1 -> Identifier7;
+  init_1 -> Literal2;
+
+  test -> BinaryExpression;
+  BinaryExpression -> Identifier1;
+  BinaryExpression -> MemberExpression0;
+  MemberExpression0 -> object0;
+  object0 -> Identifier2;
+  MemberExpression0 -> property0;
+  property0 -> Identifier3;
+
+  update -> UpdateExpression;
+  UpdateExpression -> Identifier4;
+
+  body -> ExpressionStatement;
+  ExpressionStatement -> AssignmentExpression;
+  AssignmentExpression -> left;
+  left -> Identifier8;
+  AssignmentExpression -> right;
+  right -> MemberExpression1;
+  MemberExpression1 -> object1;
+  MemberExpression1 -> property1;
+  object1 -> Identifier5;
+  property1 -> Identifier6;
+
+  VariableDeclarator0 [label="VariableDeclarator"];
+  id_0 [label="id"];
+  init_0 [label="init"];
+  VariableDeclarator1 [label="VariableDeclarator"];
+  id_1 [label="id"];
+  init_1 [label="init"];
+  Identifier0 [label="Identifier [name=i]"];
+  Literal0 [label="Literal 0"];
+  BinaryExpression [label="BinaryExpression <"];
+  Identifier1 [label="Identifier [name=i]"];
+  MemberExpression0 [label="MemberExpression"];
+  object0 [label="object"];
+  Identifier2 [label="Identifier [name=arr]"];
+  property0 [label="property"];
+  Identifier3 [label="Identifier [name=length]"];
+  UpdateExpression [label="UpdateExpression ++"];
+  Identifier4 [label="Identifier [name=i]"];
+  AssignmentExpression [label="AssignmentExpression +="];
+  MemberExpression1 [label="MemberExpression"];
+  object1 [label="object"];
+  property1 [label="property"];
+  Identifier5 [label="Identifier [name=arr]"];
+  Identifier6 [label="Identifier [name=i]"];
+  Identifier7 [label="Identifier [name=acc]"];
+  Literal2 [label="Literal 0"];
+  Identifier8 [label="Identifier [name=acc]"];
+}

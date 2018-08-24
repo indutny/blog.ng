@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>DTrace and the little ustack helper that could</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>DTrace and the little ustack helper that could</h1>
+          <span class=post-header-date>Thu Jan 10 2013 19:00:00 GMT-0500 (Eastern Standard Time)</span>
+        </section>
+
+        <section class=post-body>
+          <p><a target=__blank href="/f/tlsnappy-x64.svg">
+  <img src="/images/flamegraph.png" alt="Flamegraph">
+</a></p>
+<p><a href="http://blog.nodejs.org/2012/04/25/profiling-node-js/">Flamegraphs</a> are awesome if you need to profile your node.js application.
+They provide a nice looking visual view of where your application is spending
+its time. Although they&#39;re <a href="http://blog.nodejs.org/2012/04/25/profiling-node-js/">well</a> <a href="http://dtrace.org/blogs/dap/2012/01/05/where-does-your-node-program-spend-its-time/">documented</a>, no one has ever said a
+word on how they work internally, but everyone mentions
+&quot;ustack helper&quot; which, right now, works only on SmartOS.</p>
+<h1 id="call-stack">Call stack</h1>
+<p>To understand profiling, one must understand what a callstack is. During its
+lifetime every application is using <a href="http://en.wikipedia.org/wiki/Stack_(abstract_data_type)">stack</a>, which is a chunk of memory which can
+be changed by using <code>push</code>, <code>pop</code>, <code>call</code> and other CPU instructions, or
+by accessing it directly.</p>
+<p>The <code>push</code> and <code>pop</code> instructions simply expand/shrink stack storing/loading
+data on top of it. The <code>call</code> instruction is a little bit more interesting:</p>
+<p><em>(Quote from
+  <a href="http://download.intel.com/products/processor/manual/325462.pdf">Intel® 64 and IA-32 Architectures Software Developer’s Manual</a>)</em></p>
+<pre><code>...the processor pushes the value of the EIP register (which contains the
+offset of the instruction following the CALL instruction) on the stack (for
+use later as a return-instruction pointer). The processor then branches to
+the address in the current code segment specified by the target operand.
+</code></pre><p>So coupled with the <code>ret</code> instruction <code>call</code> allows you to jump into some
+function and return back to the place where it was called. (Despite it&#39;s
+simplicity, I still find it amazing.)</p>
+<p>That&#39;s how calling functions really work internally, but stack can be also used
+to store local (on-stack) function&#39;s data. This is achieved using stack frames.
+This is how functions&#39; assembly code do usually look:</p>
+<p><em>(I&#39;ll use <a href="http://en.wikipedia.org/wiki/X86_assembly_language#Syntax">AT&amp;T assembly syntax</a>)</em></p>
+<pre><code>push ebp ; Save previous frame pointer
+mov  esp, ebp ; Set new frame pointer
+sub  $0x60, esp ; Allocate space on stack
+
+; Function&#39;s body.
+mov  $0x10, -0x8(%ebp) ; set on-stack variable
+
+mov  ebp, esp ; Shrink stack to it&#39;s initial value
+pop  ebp ; Restore previous frame pointer
+ret  0 ; Return to caller
+</code></pre><p>If represented graphically stack generally looks like this:</p>
+<p><img src="/images/callstack.png" alt="Callstack"></p>
+<p>The main pros of using structure above are:</p>
+<ul>
+<li>Easiness of restoring stack back to its initial position</li>
+<li>Fast and simple access to on-stack variables</li>
+</ul>
+<h1 id="stack-trace">Stack trace</h1>
+<p>Suppose your application has thrown an exception or crashed with a segmentation
+fault. To find the cause of the problem one may start by looking at the stack
+trace where the crash has happened:</p>
+<pre><code>#0  0x00007fff84356d16 in kevent ()
+#1  0x00000001000557b7 in kqueue_poll ()
+#2  0x000000010004c77a in uv__run ()
+#3  0x000000010004c92a in uv_run ()
+#4  0x0000000100015319 in node::Start ()
+#5  0x000000010000dd24 in start ()
+</code></pre><p>Here, on the left, you can see addresses of functions&#39; code. Debugger gets them
+by taking current <code>eip</code> and <code>ebp</code> registers (which stands for current
+instruction address and current stack frame address), walking stack frames and
+collecting return addresses from it. On the right side, you can see functions&#39;
+real names. <a href="http://www.gnu.org/software/gdb/">gdb</a> automatically loads this information for you by searching
+for debugging symbols corresponding to addresses it has collected.</p>
+<h1 id="flamegraph">Flamegraph</h1>
+<p>In order to create flamegraph, one will need to periodically collect
+application&#39;s stack traces and join them (the process is called
+<a href="http://en.wikipedia.org/wiki/Profiling_(computer_programming)#Statistical_profilers">statistical profiling</a>),  making boxes with functions that were called more
+often - wider, and putting box on the top of another box only if their functions
+appear above each other in the stack trace.</p>
+<h1 id="v8-s-stack-frames">V8&#39;s stack frames</h1>
+<p>When collecting stack traces of C/C++ application, dtrace will use static
+debugging information using binary&#39;s symbols table. But when it comes to dynamic
+languages, getting such information turns out to be more complicated:
+functions are compiled lazily, often recompiled with applied optimizations, old
+code may be evicted by GC... in other words, application is evolving during its
+execution.</p>
+<p>Thankfully, V8 provides this information, but instead of debugging symbols
+it stores it in stack frames. Here is an example of v8&#39;s stack frame structure:</p>
+<p><img src="/images/v8-callstack.png" alt="V8 Callstack"></p>
+<p>So knowing this structure we can identify frames by checking marker/function
+value and getting function names from V8&#39;s heap (it&#39;s too big topic to cover
+here, believe me).</p>
+<p>That&#39;s exactly the job of ustack helper, it takes frame address and should figure
+out and return function&#39;s name, or just fail. So everytime you call <code>jstack()</code>
+function in DTrace probe, ustack helper will be called for every unidentified
+frame.</p>
+<h1 id="ustack-helper-example">ustack helper example</h1>
+<p><em>NOTE: some knowledge of D language is required to fully understand code below</em></p>
+<pre><code>dtrace:helper:ustack:
+{
+  /* frame pointer */
+  this-&gt;fp = arg1;
+
+  /* Last statement - result */
+  &quot;whoa! you&#39;ve identified me&quot;;
+}
+</code></pre><p>If you replace contents of <code>src/v8ustack.d</code> in node.js sources, recompile it
+(on SmartOS), run <code>bash benchmark/http-flamegraph.sh</code>, and open <code>stacks.src</code>,
+which should contain following stack traces:</p>
+<pre><code>node`_ZN2v88internal7Context14native_contextEv
+node`_ZN4node10StreamWrap15WriteStringImplILNS_13...
+node`_ZN4node10StreamWrap15WriteUtf8StringERKN2v89ArgumentsE+0x9
+whoa! you&#39;ve identified me
+whoa! you&#39;ve identified me
+whoa! you&#39;ve identified me
+</code></pre><p>As you can see, DTrace has identified some C++ functions and for all other
+addresses has called our ustack helper.</p>
+<p>Let&#39;s read some data from V8&#39;s stack frame:</p>
+<pre><code>#define FP_MARKER (-2 * 8)
+#define FT_ENTRY (1 &lt;&lt; 32)
+
+/* Init */
+dtrace:helper:ustack:
+{
+  this-&gt;fp = arg1;
+  this-&gt;done = 0;
+  this-&gt;marker = (uint64_t) 0;
+}
+
+/* Get marker */
+dtrace:helper:ustack:
+{
+  this-&gt;marker = *(uint64_t*) copyin(this-&gt;fp + FP_MARKER,
+                                     sizeof(uint64_t));
+}
+
+/* Match entry marker */
+dtrace:helper:ustack:
+/this-&gt;marker == FT_ENTRY/
+{
+  this-&gt;done = 1;
+  &quot;entry&quot;;
+}
+
+/* Match everything else */
+dtrace:helper:ustack:
+/!this-&gt;done/
+{
+  &quot;everything else&quot;;
+}
+</code></pre><p>Run it again, and if you&#39;re lucky enough you&#39;ll find this in <code>stacks.src</code>:</p>
+<pre><code>everything else
+everything else
+entry
+node`_ZN2v88internalL6InvokeEbNS0...
+</code></pre><p>Important things about ustack helper:</p>
+<ul>
+<li>It&#39;s running within kernel (though, in it&#39;s own context, so it can&#39;t crash
+it). The most important consequences of it is that user-land addresses can&#39;t
+be accessed directly, but only by using <code>copyin()</code> function.</li>
+<li>Usage of control flow statements (if/foreach/while) in DTrace scripts is
+prohibited, since all probes should terminate in a reasonable time. Otherwise
+infinite loop in kernel space will cause your system to halt.</li>
+</ul>
+<h1 id="debugging-ustack-helper">Debugging ustack helper</h1>
+<p>During development of 64bit platform support for node.js ustack helper, I found
+that it&#39;s pretty hard to debug ustack helper. The only method to do this is
+insertion of probes which are returning some debugging information, and
+observing this information later in stack traces.</p>
+<p>Additionally, it&#39;s worth noting that failed <code>copyin()</code> or any bad memory access
+won&#39;t produce any informative output, but you&#39;ll see raw address in stack trace
+(i.e. 0x0000000012345678) rather than your pretty real function&#39;s name.</p>
+<h1 id="epilogue">Epilogue</h1>
+<p>You can look at/play with node&#39;s <a href="https://github.com/joyent/node/blob/master/src/v8ustack.d">ustack helper</a>, big kudos to
+<a href="https://github.com/davepacheco">Dave Pacheco</a> for developing it!</p>
+<p>And you should check out Bryan Cantrill&#39;s and Dave Pacheco&#39;s presentation that
+explains many things that wasn&#39;t covered in this post:
+<a href="http://www.slideshare.net/bcantrill/goto2012">Dynamic Languages in Production: Progress and Open Challenges</a> and
+<a href="http://www.livestream.com/dataweek/video?clipId=pla_59016422-9a89-45be-ac86-64bc4c45fe99&amp;utm_source=lslibrary&amp;utm_medium=ui-thumb">video</a>.</p>
+<p>Huge thanks to <a href="http://voxer.com/">Voxer</a> for funding my investigation and work on porting
+DTrace ustack helper to 64bit platform! Guys, I love you. You&#39;re awesome!</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

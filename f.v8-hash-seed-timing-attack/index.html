@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>V8 hash seed timing attack</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>V8 hash seed timing attack</h1>
+          <span class=post-header-date>Wed Jan 18 2017 19:00:00 GMT-0500 (Eastern Standard Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="moment-of-history">Moment of History</h2>
+<p>There is a mostly forgotten <a href="https://github.com/nodejs/node-v0.x-archive/issues/2431">security issue</a> that was fixed in
+Node.js back in 2012. It was originally announced on the
+<a href="https://www.youtube.com/watch?v=R2Cq3CLI6H8">28c3 conference</a> December, 2011 and the final fix landed in
+<a href="https://github.com/nodejs/node/commit/16953329413831b32f4c3b2255aeacec874ed69d">January, 2012</a>.</p>
+<p>In few words, the most of dynamic languages use either bucket lists or
+<a href="https://en.wikipedia.org/wiki/Hash_table#Open_addressing">open addressing</a> variants of hash tables. V8 uses the latter one, and in
+such case when VM is asked to insert a property into an object it does
+the following sequence of actions:</p>
+<ol>
+<li>Compute the hash of the key (quite often with a <a href="https://en.wikipedia.org/wiki/Jenkins_hash_function">Jenkins hash</a>)</li>
+<li>Clear the high bits of the hash value</li>
+<li>Use it as an index in the internal array</li>
+<li>Find unused slot in that array</li>
+<li>Insert the key/value pair at that slot.</li>
+</ol>
+<p>This sounds pretty much OK, except for the step 4. One may ask: What if the
+target slot is way too far from the index in the step 3? The answer is: it will
+take more time to do such insertion.</p>
+<p>Do you see where it is going?</p>
+<h2 id="collision-attacks">Collision attacks</h2>
+<p>If the attacker can insert many keys like these into the hash table - the whole
+procedure is going be much slower than usual (20x slower in some cases). During
+this time Node.js will be blocked, and performing such insertions one after
+another leads directly to Denial of Service attack. To put it in concrete
+context: <code>req.headers</code> in <code>http.Server</code> is populated with user data, and is thus
+susceptible to this kind of attack.</p>
+<p>How does one generate such keys? Trivial and fast brute-force could generate as
+many keys as needed to give desired &quot;collisions&quot; given that attacker knows what
+hash function is used by VM.</p>
+<p>What was done to fix it in V8/Node.js? Together with V8 team we added seeds to
+all hash tables used in V8, and made sure that they are randomized on the
+process start.</p>
+<h2 id="inspiration-for-an-experiment">Inspiration for an Experiment</h2>
+<p>After reading this <a href="http://perl11.org/blog/seed.html">Perl blog post</a> I thought that it would be funny to
+carry out an actual hash seed extraction out of the live node.js process:
+first - locally within the process itself, second - from http server on the same
+machine, third - remotely (no luck so far). Knowing the seed means being able
+to craft the collisions, and this gets us back to DoS problem.</p>
+<p>Numerous code paths in V8 have been tried, until I stumbled upon a
+<a href="https://github.com/v8/v8/blob/140d4df7954259e60a555efc0b2d00a9c924564c/src/objects-inl.h#L3140-L3157">particular function</a>. There V8 puts a new property into an internal list
+called <code>DescriptorArray</code>. For performance reasons properties in that array
+must be sorted, and since V8 extends the array - it has to shift all bigger
+properties to the right to make space for the new one.</p>
+<p>By measuring timing of such insertions, attacker could figure out approximate
+position of the inserted key. <code>DescriptorArray</code> holds no more than 18 keys, so
+it could be attempted to insert the same 17 keys and one random one many times,
+and infer the difference in timing to find the random keys that were placed
+either at the very end or at the start of the array.</p>
+<p>It&#39;s easier said than done, though. V8 has many layers of caching (which is one
+of the reasons why your JavaScript code is so fast!). In order to get
+through to that <code>DescriptorArray::Append</code> function, I had to outflank all of
+them. In the end, the resulting program does everything in reverse - the random
+key is inserted first, and then 17 predefined keys are inserted right after it.
+The difference is non-obvious, but that&#39;s the part of the solution to skip all
+of the caches.</p>
+<p>This is how it looks:</p>
+<pre><code class="lang-javascript">function test(pre, list) {
+  const o = {};
+  o[pre] = null;
+  for (let i = 0; i &lt; list.length; i++)
+    o[list[i]] = null;
+  return o;
+}
+</code></pre>
+<p>Now this script has to create a <code>list</code> of keys, and a large number of probes
+(2093 strings that are passed one after another as <code>pre</code>). It can try each probe
+with the same <code>list</code>, and measure the timing with <code>process.hrtime()</code> with
+nanosecond precision. Largertime difference means that the probe was inserted
+at the start of the <code>DescriptorArray</code>, and thus its hash value (32 bit number)
+is less than all hashes of the keys in the <code>list</code>. When the time delta is least</p>
+<ul>
+<li>probe was appended to the end of the <code>DescriptorArray</code>, meaning that its hash
+is the biggest in it.</li>
+</ul>
+<p>It may sound like not too much to stick to, but if one can collect enough such
+&quot;relations&quot; between the probe and keys - one can brute force all 32-bit seed
+values to find the one that gives the best approximation to this relation!
+In fact, it takes just about 15 minutes on 20 core machine to do it, and this
+time can be improved by using GPU (I dare you!).</p>
+<p>The most important part of brute forcing function is <code>check</code>:</p>
+<pre><code class="lang-c">static int check(uint32_t seed) {
+  int score;
+  uint32_t key_hashes[ARRAY_SIZE(keys)];
+
+  score = 0;
+
+  for (size_t i = 0; i &lt; ARRAY_SIZE(keys); i++) {
+    key_hashes[i] = jenkins(keys[i], seed);
+  }
+
+  for (size_t i = 0; i &lt; ARRAY_SIZE(probes); i += 2) {
+    uint32_t l;
+    uint32_t r;
+
+    l = jenkins(probes[i], seed);
+    r = jenkins(probes[i + 1], seed);
+
+    for (size_t j = 0; j &lt; ARRAY_SIZE(keys); j++) {
+      if (l &lt; key_hashes[j])
+        score++;
+      if (key_hashes[j] &lt;= r)
+        score++;
+    }
+  }
+
+  return score;
+}
+</code></pre>
+<p><code>l</code> is a probe that supposedly has the lowest hash value in <code>DescriptorArray</code>,
+<code>r</code> is a probe that has the highest. So all in all, <code>brute.c</code> just searches for
+the seed value that maximizes the result of <code>check</code>. Simple!</p>
+<h2 id="conclusions-and-code">Conclusions and code</h2>
+<p>This works locally as a charm, and works with a <code>http.Server</code> on the same
+machine to some extent. Unfortunately (or fortunately?) this attack doesn&#39;t work
+with remote servers (or I wasn&#39;t able to execute it), even when the ping is
+around 1ms. The timing difference that we are looking for is about several
+microseconds, and it looks like it is smudged out in the network delay
+distribution.</p>
+<p>V8 team is aware of this effort, and the decision is that this is not a security
+defect - hence it is published here.</p>
+<p>All code is available on <a href="https://github.com/indutny/hash-cracker">github</a>. Please enjoy with care!</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

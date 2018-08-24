@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Sea of Nodes</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Sea of Nodes</h1>
+          <span class=post-header-date>Wed Oct 07 2015 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="brief-intro">Brief intro</h2>
+<p>This post is going to be about the sea-of-nodes compiler concept that I have
+recently learned.</p>
+<p>While it is not completely necessary, it may be useful to take a peek at the
+some of my previous posts on JIT-compilers before reading this:</p>
+<ul>
+<li><a href="/4.how-to-start-jitting">How to start JIT-ting</a></li>
+<li><a href="/5.allocating-numbers">Allocating numbers</a></li>
+<li><a href="/6.smis-and-doubles">SMIs and Doubles</a></li>
+<li><a href="/a.deoptimize-me-not">Deoptimize me not, v8</a></li>
+</ul>
+<h2 id="compilers-translators">Compilers = translators</h2>
+<p>Compilers are something that every Software Engineer uses several times a day.
+Surprisingly even people who consider themselves to be far from writing the
+code, still use a compiler quite heavily throughout their day. This is
+because most of the web depends on client-side code execution, and many of such
+client-side programs are passed to the browser in a form of the source code.</p>
+<p>Here we come to an important thing: while source code is (usually)
+human-readable, it looks like complete garbage to your
+laptop/computer/phone/...&#39;s CPU. On other hand, machine code, that computers
+<strong>can</strong> read, is (almost always) not human-readable. Something should be done
+about it, and the solution to this problem is provided by the process called
+<strong>translation</strong>.</p>
+<p>Trivial compilers perform a single pass of <em>translation</em>: from the source code
+to the machine code. However, in practice most compilers do at least two passes:
+from the source code to <a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree">Abstract Syntax Tree</a> (AST), and from <a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree">AST</a> to
+machine code. <a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree">AST</a> in this case acts like an <em>Intermediate Representation</em>
+(IR), and as the name suggests, <a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree">AST</a> is just another form of the same source
+code. These intermediate representations chain together and essentially are
+nothing else but the abstraction layers.</p>
+<p>There is no limit on the layer count. Each new layer brings the source program
+closer to how it will look like in machine code.</p>
+<h2 id="optimization-layers">Optimization layers</h2>
+<p>However, not all layers are used solely for translation. Many compilers also
+additionally attempt to optimize the human-written code. (Which is usually
+written to have a balance between code elegance and code performance).</p>
+<p>Take the following JavaScript code, for example:</p>
+<pre><code class="lang-javascript">for (var i = 0, acc = 0; i &lt; arr.length; i++)
+  acc += arr[i];
+</code></pre>
+<p>If the compiler would translate it to the machine code straight out of <a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree">AST</a>,
+it may resemble (in very abstract and detached from reality instruction set):</p>
+<pre><code>acc = 0;
+i = 0;
+loop {
+  // Load `.length` field of arr
+  tmp = loadArrayLength(arr);
+  if (i &gt;= tmp)
+    break;
+
+  // Check that `i` is between 0 and `arr.length`
+  // (NOTE: This is necessary for fast loads and
+  // stores).
+  checkIndex(arr, i);
+
+  // Load value
+  acc += load(arr, i);
+
+  // Increment index
+  i += 1;
+}
+</code></pre><p>It may not be obvious, but this code is far from optimal. Array length does not
+really change inside of the loop, and the range checks are not necessary at all.
+Ideally, it should look like this:</p>
+<pre><code>acc = 0;
+i = 0;
+len = loadArrayLength(arr);
+loop {
+  if (i &gt;= tmp)
+    break;
+
+  acc += load(arr, i);
+  i += 1;
+}
+</code></pre><p>Let&#39;s try to imagine how we could do this.</p>
+<p>Suppose we have an <a href="https://en.wikipedia.org/wiki/Abstract_syntax_tree">AST</a> at hand, and we try to generate the machine code
+straight out of it:</p>
+<p><em>(NOTE: Generated with <a href="https://github.com/jquery/esprima">esprima</a>)</em></p>
+<pre><code class="lang-javascript">{ type: &#39;ForStatement&#39;,
+
+  //
+  // This is `var i = 0;`
+  //
+  init:
+   { type: &#39;VariableDeclaration&#39;,
+     declarations:
+      [ { type: &#39;VariableDeclarator&#39;,
+          id: { type: &#39;Identifier&#39;, name: &#39;i&#39; },
+          init: { type: &#39;Literal&#39;, value: 0, raw: &#39;0&#39; } },
+        { type: &#39;VariableDeclarator&#39;,
+          id: { type: &#39;Identifier&#39;, name: &#39;acc&#39; },
+          init: { type: &#39;Literal&#39;, value: 0, raw: &#39;0&#39; } }],
+     kind: &#39;var&#39; },
+
+  //
+  // `i &lt; arr.length`
+  //
+  test:
+   { type: &#39;BinaryExpression&#39;,
+     operator: &#39;&lt;&#39;,
+     left: { type: &#39;Identifier&#39;, name: &#39;i&#39; },
+     right:
+      { type: &#39;MemberExpression&#39;,
+        computed: false,
+        object: { type: &#39;Identifier&#39;, name: &#39;arr&#39; },
+        property: { type: &#39;Identifier&#39;, name: &#39;length&#39; } } },
+
+  //
+  // `i++`
+  //
+  update:
+   { type: &#39;UpdateExpression&#39;,
+     operator: &#39;++&#39;,
+     argument: { type: &#39;Identifier&#39;, name: &#39;i&#39; },
+     prefix: false },
+
+  //
+  // `arr[i] += 1;`
+  //
+  body:
+   { type: &#39;ExpressionStatement&#39;,
+     expression:
+      { type: &#39;AssignmentExpression&#39;,
+        operator: &#39;+=&#39;,
+        left: { type: &#39;Identifier&#39;, name: &#39;acc&#39; },
+        right:
+         { type: &#39;MemberExpression&#39;,
+           computed: true,
+           object: { type: &#39;Identifier&#39;, name: &#39;arr&#39; },
+           property: { type: &#39;Identifier&#39;, name: &#39;i&#39; } } } }
+</code></pre>
+<p>This JSON could also be visualized:
+<img src="/images/ast.svg" alt="AST"></p>
+<p>This is a tree, so it is very natural to traverse it from the top to the bottom,
+generating the machine code as we visit the AST nodes. The problem with this
+approach is that the information about variables is very sparse, and is spread
+through the different tree nodes.</p>
+<p>Again, to safely move the length lookup out of the loop we need to know that the
+array length does not change between the loop&#39;s iterations. Humans can do it
+easily just by looking at the source code, but the compiler needs to do quite a
+lot of work to confidently extract those facts directly from the AST.</p>
+<p>Like many other compiler problems, this is often solved by lifting the data into
+a more appropriate abstraction layer, i.e. intermediate representation. In this
+particular case that choice of IR is known as a data-flow graph (DFG). Instead
+of talking about syntax-entities (like <code>for loop</code>s, <code>expressions</code>, ...), we
+should talk about the data itself (read, variables values), and how it changes
+through the program.</p>
+<h2 id="data-flow-graph">Data-flow Graph</h2>
+<p>In our particular example, the data we are interested in is the value of
+variable <code>arr</code>. We want to be able to easily observe all uses of it to verify
+that there are no out-of-bounds accesses or any other change that would modify
+the length of the array.</p>
+<p>This is accomplished by introducing &quot;def-use&quot; (definition and uses) relationship
+between the different data values. Concretely, it means that the value has been
+declared once (<em>node</em>), and that it has been used somewhere to create new values
+(<em>edge</em> for every use). Obviously, connecting different values together will
+form a <strong>data-flow graph</strong> like this:</p>
+<p><img src="/images/data-flow.svg" alt="Data-flow Graph"></p>
+<p>Note the red <code>array</code> box in this vast graph. The solid arrows going out of it
+represent uses of this value. By iterating over those edges, the compiler can
+derive that the value of <code>array</code> is used at:</p>
+<ul>
+<li><code>loadArrayLength</code></li>
+<li><code>checkIndex</code></li>
+<li><code>load</code></li>
+</ul>
+<p>Such graphs are constructed in the way that explicitly &quot;clones&quot; the array node,
+if its value was accessed in a destructive manner (i.e. stores, length sizes).
+Whenever we see <code>array</code> node and observe its uses - we are always certain that
+its value does not change.</p>
+<p>It may sound complicated, but this property of the graph is quite easy to
+achieve. The graph should follow <a href="https://en.wikipedia.org/wiki/Static_single_assignment_form">Single Static Assignment</a> (SSA) rules.
+In short, to convert any program to <a href="https://en.wikipedia.org/wiki/Static_single_assignment_form">SSA</a> the compiler needs to rename all
+assignments and later uses of the variables, to make sure that each variable is
+assigned only once.</p>
+<p>Example, before SSA:</p>
+<pre><code class="lang-javascript">var a = 1;
+console.log(a);
+a = 2;
+console.log(a);
+</code></pre>
+<p>After SSA:</p>
+<pre><code class="lang-javascript">var a0 = 1;
+console.log(a0);
+var a1 = 2;
+console.log(a1);
+</code></pre>
+<p>This way, we can be sure that when we are talking about <code>a0</code> - we are actually
+talking about a single assignment to it. This is really close to how people do
+things in the functional languages!</p>
+<p>Seeing that <code>loadArrayLength</code> has no control dependency (i.e. no dashed lines;
+we will talk about them in a bit), compiler may conclude that this node is free
+to move anywhere it wants to be and can be placed outside of the loop.
+By going through the graph further, we may observe that the value of <code>ssa:phi</code>
+node is always between <code>0</code> and <code>arr.length</code>, so the <code>checkIndex</code> may be removed
+altogether.</p>
+<p>Pretty neat, isn&#39;t it?</p>
+<h2 id="control-flow-graph">Control Flow Graph</h2>
+<p>We just used some form of <a href="https://en.wikipedia.org/wiki/Data-flow_analysis">data-flow analysis</a> to extract information from
+the program. This allows us to make safe assumptions about how it could be
+optimized.</p>
+<p>This <em>data-flow representation</em> is very useful in many other cases too. The only
+problem is that by turning our code into this kind of graph, we made a step
+backwards in our representation chain (from the source code to the machine
+code). This intermediate representation is less suitable for generating machine
+code than even the AST.</p>
+<p>The reason is that the machine is just a sequential list of instructions, which
+the CPU executes one-after-another. Our resulting graph doesn&#39;t appear to
+convey that. In fact, there is no enforced ordering in it at all.</p>
+<p>Usually, this is solved by grouping the graph nodes into blocks. This
+representation is known as a <a href="https://en.wikipedia.org/wiki/Control_flow_graph">Control Flow Graph</a> (CFG). Example:</p>
+<pre><code>b0 {
+  i0 = literal 0
+  i1 = literal 0
+
+  i3 = array
+  i4 = jump ^b0
+}
+b0 -&gt; b1
+
+b1 {
+  i5 = ssa:phi ^b1 i0, i12
+  i6 = ssa:phi ^i5, i1, i14
+
+  i7 = loadArrayLength i3
+  i8 = cmp &quot;&lt;&quot;, i6, i7
+  i9 = if ^i6, i8
+}
+b1 -&gt; b2, b3
+b2 {
+  i10 = checkIndex ^b2, i3, i6
+  i11 = load ^i10, i3, i6
+  i12 = add i5, i11
+  i13 = literal 1
+  i14 = add i6, i13
+  i15 = jump ^b2
+}
+b2 -&gt; b1
+
+b3 {
+  i16 = exit ^b3
+}
+</code></pre><p>It is called a graph not without the reason. For example, the <code>bXX</code> blocks
+represent nodes, and the <code>bXX -&gt; bYY</code> arrows represent edges. Let&#39;s visualize
+it:</p>
+<p><img src="/images/cfg.svg" alt="CFG"></p>
+<p>As you can see, there is code before the loop in block <code>b0</code>, loop header in
+<code>b1</code>, loop test in <code>b2</code>, loop body in <code>b3</code>, and exit node in <code>b4</code>.</p>
+<p>Translation to machine code is very easy from this form. We just replace <code>iXX</code>
+identifiers with CPU register names (in some sense, CPU registers are sort of
+variables, the CPU has a limited amount of registers, so we need to be careful
+to not run out of them), and generating machine code for each instruction,
+line-by-line.</p>
+<p>To recap, <a href="https://en.wikipedia.org/wiki/Control_flow_graph">CFG</a> has data-flow relations and also ordering. This allows us to
+utilize it for both data-flow analysis and machine code generation. However,
+attempting to optimize the CFG, by manipulating the blocks and their contents
+contained within it, can quickly become complex and error-prone.</p>
+<p>Instead, Clifford Click and Keith D. Cooper proposed to use an approach
+called <a href="http://www.researchgate.net/profile/Cliff_Click/publication/2394127_Combining_Analyses_Combining_Optimizations/links/0a85e537233956f6dd000000.pdf"><strong>sea-of-nodes</strong></a>, the very topic of this blog post!</p>
+<h2 id="sea-of-nodes">Sea-of-Nodes</h2>
+<p>Remember our fancy data-flow graph with dashed lines? Those dashed-lines are
+actually what make that graph a <strong>sea-of-nodes</strong> graph.</p>
+<p>Instead of grouping nodes in blocks and ordering them, we choose to declare the
+control dependencies as the dashed edges in a graph. If we will take that graph,
+remove everything <strong>non-dashed</strong>, and group things a bit we will get:</p>
+<p><img src="/images/control-flow-sea.svg" alt="Control-flow part of Sea-of-Nodes"></p>
+<p>With a bit of imagination and node reordering, we can see that this graph is the
+same as the simplified CFG graphs that we have just seen above:</p>
+<p><img src="/images/cfg.svg" alt="CFG"></p>
+<p>Let&#39;s take another look at the <strong>sea-of-nodes</strong> representation:</p>
+<p><img src="/images/data-flow.svg" alt="Sea-of-Nodes"></p>
+<p>The striking difference between this graph and CFG is that there is no ordering
+of the nodes, except the ones that have control dependencies (in other words,
+the nodes participating in the control flow).</p>
+<p>This representation is very powerful way to look at the code. It has all
+insights of the general data-flow graph, and could be changed easily without
+constantly removing/replacing nodes in the blocks.</p>
+<h2 id="reductions">Reductions</h2>
+<p>Speaking of changes, let&#39;s discuss the way to modify the graph. The sea-of-nodes
+graph is usually modified by doing graph reductions. We just queue all nodes in
+the graph. Invoke our reduction function for every node in the queue. Everything
+that this function touches (changes, replaces) is queued back, and will be
+passed to the function later on. If you have many reductions, you can just stack
+them up together and invoke all of them on each node in the queue, or
+alternatively, you can just apply them one after another, if they depend on the
+final state of each other. It works like a charm!</p>
+<p>I have written a JavaScript toolset for my sea-of-nodes experiments, which
+includes:</p>
+<ul>
+<li><a href="https://github.com/indutny/json-pipeline">json-pipeline</a> - the builder and stdlib of the graph. Provides methods
+to create nodes, add inputs to them, change their control dependencies, and
+export/import the graph to/from the printable data!</li>
+<li><a href="https://github.com/indutny/json-pipeline-reducer">json-pipeline-reducer</a> - the reductions engine. Just create a reducer
+instance, feed it several reduction functions, and execute the reducer on the
+existing <a href="https://github.com/indutny/json-pipeline">json-pipeline</a> graph.</li>
+<li><a href="https://github.com/indutny/json-pipeline-scheduler">json-pipeline-scheduler</a> - library for putting back unordered graph in a
+limited amount of blocks connected to each other by control edges (dashed
+lines).</li>
+</ul>
+<p>Combined together, these tools can solve many problems that could be formulated
+in terms of data-flow equations.</p>
+<p>Example of reduction, which will optimize our initial JS code:</p>
+<pre><code class="lang-javascript">for (var i = 0, acc = 0; i &lt; arr.length; i++)
+  acc += arr[i];
+</code></pre>
+<h3 id="tl-dr">TL;DR</h3>
+<p>This code chunk is quite big, so if you want to skip it - here are the notes of
+what we will do below:</p>
+<ul>
+<li>Compute integer ranges of various nodes: literal, add, phi</li>
+<li>Compute limits that apply to branch&#39;s body</li>
+<li>Apply range and limit information (<code>i</code> is always a non-negative number limited
+by <code>arr.length</code>) to conclude that length check is not necessary and can be
+removed</li>
+<li><code>arr.length</code> will be moved out of the loop automatically by
+<code>json-pipeline-scheduler</code>. This is because it does <a href="https://courses.cs.washington.edu/courses/cse501/04wi/papers/click-pldi95.pdf">Global Code Motion</a> to
+schedule nodes in blocks.</li>
+</ul>
+<script src="https://gist.github.com/indutny/781757293040e8a38efb.js"></script>
+
+<p>Thank you for reading this. Please expect more information about this
+sea-of-nodes approach.</p>
+<hr>
+<p>Special thanks to <a href="https://github.com/paulfryzel">Paul Fryzel</a> for proof-reading this, and providing
+valuable feedback and grammar fixes!</p>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>

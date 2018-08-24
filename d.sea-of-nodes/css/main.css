@@ -1,0 +1,169 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  padding: 0;
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, ".SFNSDisplay-Regular", "Helvetica Neue", "Lucida Grande";
+  font-size: 24px;
+}
+
+#info {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 240px;
+  background: #111;
+  padding: 16px;
+  font-size: 32px;
+}
+
+#info, #info a {
+  color: #fff;
+}
+
+#info a:visited {
+  color: #888;
+}
+
+#info .info-copyright {
+  position: absolute;
+  bottom: 16px;
+  font-size: 8px;
+}
+
+#info .info-credits {
+  position: absolute;
+  bottom: 32px;
+  font-size: 8px;
+  color: #333;
+}
+
+#content {
+  margin-left: 256px;
+  padding: 16px;
+}
+
+#content, #content a {
+  color: #222;
+}
+
+#content a:visited {
+  color: #777;
+}
+
+#content .post .post-header h1 {
+  font-size: 48px;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+#content .post-list .post-list-date,
+#content .post .post-header-date {
+  font-size: 16px;
+  color: #ccc;
+}
+
+#content .post img {
+  max-width: 100%;
+}
+
+#content pre {
+  background: #FFFDE3;
+  border: 1px solid #666;
+  font-size: 14px;
+  padding: 8px;
+  margin: 0 24px;
+}
+
+@media screen and (max-width: 1195px) {
+  #info {
+    position: inherit;
+    width: 100%;
+    margin-bottom: 24px;
+  }
+
+  #info .info-copyright {
+    position: inherit;
+    text-align: right;
+  }
+
+  #content {
+    margin-left: 0px;
+    text-overflow: ellipsis;
+    word-wrap: break-word;
+  }
+
+  #content pre {
+    margin: 0;
+    font-size: 24px;
+    padding: 0;
+  }
+}
+
+@keyframes vote-loading {
+  from {
+    border: 1px solid #eee;
+    box-shadow: 0 0 0 rgba(21, 87, 153, 0.0);
+  }
+
+  to {
+    border: 1px solid #aaa;
+    box-shadow: 0 0 8px rgba(21, 87, 153, 0.6);
+  }
+}
+
+.votewdgt {
+  height: 32px;
+  border-radius: 0.3rem;
+  background: #fff;
+  color: #333;
+  font-size: 16px;
+  float: right;
+  margin: 8px 8px 0 0;
+  text-align: center;
+  user-select: none;
+
+  transition: border 1s, box-shadow 1s, padding-left 0.3s, min-width 0.3s, background-position 0.3s 0.3s;
+  border: 1px solid #aaa;
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+  min-width: 32px;
+  background-position: 4px 32px;
+}
+
+.votewdgt:not(:disabled) {
+  cursor: pointer;
+}
+
+.votewdgt.votewdgt-ready:not(:disabled) {
+  padding-left: 32px;
+  min-width: 64px;
+  background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" x="0px" y="0px" viewBox="0 0 512 640"><g><polygon points="128,320 256,192 384,320"/></g></svg>') no-repeat 4px 4px;
+}
+
+.votewdgt.votewdgt-loading,
+.votewdgt.votewdgt-computing,
+.votewdgt.votewdgt-voting {
+  animation-name: vote-loading;
+  animation-direction: alternate;
+  animation-duration: 0.5s;
+  animation-iteration-count: infinite;
+  cursor: progress;
+}
+
+.votewdgt.votewdgt-ready:not(:disabled):hover {
+  font-size: 0;
+}
+
+.votewdgt.votewdgt-ready:not(:disabled):hover:after {
+  font-size: 16px;
+  font-weight: bold;
+  content: '+1';
+}
+
+.votewdgt.votewdgt-voting {
+  border: 1px solid #333;
+}

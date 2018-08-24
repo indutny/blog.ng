@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name=viewport content"width=device-width,initial-scale=1,maximum-scale=10" />
+    
+    <title>Diving into C++ internals of node</title>
+    
+    <link rel=alternate type="application/rss+xml" href="http://darksi.de/rss.xml" title="Fedor Indutny's blog">
+    <link rel=stylesheet href="/css/main.css" />
+  </head>
+  <body>
+    <aside id=info>
+      <section class=info-title>
+        <a href="/">darksi.de</a>
+        <br/>
+        of
+        </br>
+        Software Engineering
+      </section>
+    
+      <section class=info-copyright>
+        Copyright <a href="https://github.com/indutny">Fedor Indutny</a>,
+        view <a href="http://opensource.org/licenses/mit-license.php">license</a>
+      </section>
+    
+      <section class=info-credits>
+        <i>Icons by: Bluetip Design from the Noun Project</i>
+      </section>
+    </aside>
+    <section id=content>
+      <article class=post>
+        <section class=post-header>
+          <button class=votewdgt title=upvote>?</button>
+          <h1>Diving into C++ internals of node</h1>
+          <span class=post-header-date>Fri May 15 2015 20:00:00 GMT-0400 (Eastern Daylight Time)</span>
+        </section>
+
+        <section class=post-body>
+          <h2 id="intro">Intro</h2>
+<p>There is nothing to be scared about in the C++ internals of the project,
+especially in internals of <a href="https://github.com/nodejs/io.js">io.js</a> and <a href="https://github.com/nodejs/node">node.js</a>.</p>
+<p>If you ever tried to optimize JavaScript code to squeeze out every possible
+performance or memory usage improvement out of it - you already wrote some C++
+code.</p>
+<p>Many blogs, workshops mention JavaScript optimizations, and some of the popular
+suggestions are:</p>
+<h3 id="hidden-classes">Hidden Classes</h3>
+<p>Declare all properties in the constructor to avoid creating extra
+&quot;hidden classes&quot;. This makes them pretty much the same as a C structures,
+or C++ classes, where properties are declared ahead of time to help the
+compiler optimize access to them.</p>
+<p>Example:</p>
+<pre><code class="lang-javascript">function Point(x, y, z) {
+  this.x = x
+  this.y = y
+  this.z = z
+}
+</code></pre>
+<p>Similar code in C++:</p>
+<pre><code class="lang-c">class Point {
+ public:
+  double x;
+  double y;
+  double z;
+};
+</code></pre>
+<h3 id="avoid-polymorphism">Avoid Polymorphism</h3>
+<p>Avoid storing different types of values in a variables, and avoid passing
+different types of values as an arguments to the function. This principle could
+also be called &quot;Make your code monomorphic&quot;, or &quot;don&#39;t mess with Compiler&quot;.
+This makes code look like as it has static typing, which is what we do in
+C++.</p>
+<pre><code class="lang-javascript">function add(x, y) {
+  return x + y;
+}
+
+add(0, 1); // &lt;- good
+add(&#39;foo&#39;, &#39;bar&#39;); // &lt;- polymorphism!
+</code></pre>
+<p>Compare to:</p>
+<pre><code class="lang-c">int add(int x, int y) {
+  return x + y;
+}
+</code></pre>
+<h3 id="cache-and-reuse">Cache and Reuse</h3>
+<p>Cache and reuse instances of objects that are expensive to create and are
+allocated often. This is one is similar to manual memory allocation in C++.</p>
+<pre><code class="lang-javascript">function Parser() {
+}
+
+Parser.freelist = [];
+
+Parser.get = function() {
+  if (this.freelist.length)
+    return this.freelist.pop();
+  return new Parser();
+};
+
+Parser.prototype.release = ...;
+</code></pre>
+<p>In C++:</p>
+<pre><code class="lang-c">Parser* p = new Parser();
+delete p;
+</code></pre>
+<p>To conclude, even if you never wrote C++ code, you actually very likely did it
+in JS.</p>
+<p>It is no surprise we use C++ in io.js/node.js. After all, V8 is written in C++
+and it provides only a limited set of ECMAScript JavaScript APIs. They are
+definitely cool, but if you got used to <code>setTimeout()</code> / <code>clearTimeout()</code> -
+you&#39;ll be pretty disappointed to use just plain ECMA.</p>
+<p>Our C++ layer lives on top of the event-loop and provides all sorts of APIs:
+from net sockets to dns queries, from file system events to the zlib bindings.
+Which is the main reason why node.js was created in the first place!</p>
+<h2 id="short-history-of-c-layer">Short History of C++ layer</h2>
+<p><img src="/images/history_of_git_blame.jpg" alt="History of git blame"></p>
+<p>To better understand all of these, and to ease the contribution process - it
+might be a good idea to start with the history of the subject. Luckily, from its
+inception, node.js is using VCS, in particular git, so the history of the
+development might be revealed by running <code>git log</code> and <code>git blame</code> on it.</p>
+<p>Briefly, <code>git log deps/v8</code> - has the history of v8 fighting us, and
+<code>git log src/</code> - has the history of us fighting v8.</p>
+<h2 id="very-first-version">Very first version</h2>
+<p>Jokes aside, everything started from <a href="https://github.com/nodejs/io.js/commit/61890720">61890720</a> commit. The commit log
+just says:</p>
+<pre><code>add readme and initial code
+</code></pre><p>Unfortunately, we can&#39;t elaborate much from it, and need to figure out the
+details ourselves. What do we see there?</p>
+<ul>
+<li><a href="https://github.com/taf2/libebb">libebb</a> - which was used as an HTTP parser. Ryan used the code
+from the <a href="https://github.com/gnosek/ebb">Ebb</a> server that he has previously written for Ruby</li>
+<li><a href="https://cs.fit.edu/code/projects/cse2410_fall2014_bounce/repository/revisions/90fc8d36220c0d66c352ee5f72080b8592d310d5/show/deps/liboi">liboi</a>- which was as a TCP server framework on top of the <a href="http://software.schmorp.de/pkg/libev.html">libev</a>.
+liboi stands for <code>Library for Output Input</code></li>
+</ul>
+<p>So the first code (that actually started compiling only at <a href="https://github.com/nodejs/io.js/commit/7b7ceea">7b7ceea</a>) only
+had one HTTP server and supplied JavaScript source code was just a handler for
+it.</p>
+<pre><code class="lang-javacsript">function Process(request) {
+  if (options.verbose) {
+    log(&quot;Processing &quot; + request.host +
+        request.path +
+        &quot; from &quot; + request.referrer +
+        &quot;@&quot; + request.userAgent);
+  }
+  if (!output[request.host])
+    output[request.host] = 1;
+  else
+    output[request.host]++
+}
+</code></pre>
+<p>How was it organized internally?</p>
+<p>There was a <code>server.cc</code> file which was reading the command line options, loading
+the JavaScript source file, feeding all of these into V8, and starting the HTTP
+server.</p>
+<p>Second C++ file was <code>js_http_request_processor.cc</code> and it was responsible for
+invoking the JavaScript http request handler. Not that much for a separate C++
+file, right?</p>
+<p>It wasn&#39;t working that much at that point, and didn&#39;t have any of
+functionality that is provided today. So let&#39;s conclude and move on from it
+quickly.</p>
+<p>This version is characterized by following:</p>
+<ul>
+<li>One file to setup V8 and let JavaScript know about command-line arguments</li>
+<li>HTTP server fully implemented in C/C++, not invoking the JavaScript for any
+networking activities</li>
+<li>One C++ instance per every incoming request, this instance maps some of the
+HTTP fields (like host, url, method) to the JavaScript object.</li>
+</ul>
+<p>The last bullet point is very important to note: the C++ instance <-> JS object
+mapping is a building brick of all future releases of node.js (including the
+present one).</p>
+<h2 id="064c8f02">064c8f02</h2>
+<p>Now we quickly jump to <a href="https://github.com/nodejs/io.js/commit/064c8f02">064c8f02</a>. The commit log says:</p>
+<pre><code>Use ObjectWrap base class for File, Socket, Server.
+</code></pre><p>And this is the point where node.js has introduced one API to wrap all objects.</p>
+<p><code>net.Server</code>, <code>net.Socket</code>, and <code>File</code> C++ classes are children of this
+<code>ObjectWrap</code> class. Which means that for every instance of them -
+there will be one instance of a JS object. Invoking methods on this JS object
+will invoke C++ methods on the corresponding C++ class, and the constructor
+itself is a C++ class constructor.</p>
+<p>There are now different files for different parts of the provided API:</p>
+<ul>
+<li><code>src/node.cc</code> to set up C++ libraries and invoke <code>src/main.js</code> which
+loads the script file and does some JavaScript initialization. (At this commit
+we started to write as much code as possible in JavaScript, and leave
+the rest in the C++ land. This pattern is used in io.js and node.js now too)</li>
+<li><code>src/http.cc</code> - http server API, Connection, HttpRequest objects</li>
+<li><code>src/file.cc</code>, <code>src/file.js</code> - future <code>fs</code> module.
+<code>src/file.js</code> consists of the API abstractions for the C++ layer,
+basically the same thing as with <code>src/node.cc</code> and <code>src/main.js</code></li>
+<li><code>src/process.cc</code> has only <code>exit()</code> method so far, will evolve into the
+<code>process</code> object</li>
+<li><code>src/timers.cc</code> is about <code>setTimeout</code>/<code>setInterval</code></li>
+</ul>
+<p>Just a side note: HTTP server is still provided by <a href="https://cs.fit.edu/code/projects/cse2410_fall2014_bounce/repository/revisions/90fc8d36220c0d66c352ee5f72080b8592d310d5/show/deps/liboi">liboi</a>, and node.js is
+using <a href="http://software.schmorp.de/pkg/libev.html">libev</a>.</p>
+<h2 id="v0-2">v0.2</h2>
+<p>There was lots of growing and maturing from that commit to the v0.2, and most
+notable of them were about separating the JS parts from the C++ ones,
+adding CommonJS support, and tons of new modules! The file structure is
+beginning to look like what we have now:</p>
+<ul>
+<li><code>lib/</code> folder for all JavaScript CommonJS modules</li>
+<li><code>src/</code> for their C++ counterparts</li>
+<li><code>deps/</code> for all dependencies: v8, http-parser, c-ares (for async DNS),
+libeio (for async FS), and libev (for async networking and auxiliary stuff)</li>
+</ul>
+<p>Previously barely used through the <code>src/</code>, <code>ObjectWrap</code> now became a public API,
+which helped polish it out a lot and improved our core use case as well.</p>
+<p>Very importantly, in <a href="https://github.com/nodejs/io.js/commit/064c8f02">064c8f02</a> all C++ interfaces were global objects. In
+v0.2 they are provided by <code>process.binding</code> and are thus not directly visible to
+the user&#39;s code.</p>
+<p>For example, <code>process.binding(&#39;fs&#39;)</code>:</p>
+<pre><code class="lang-javascript">&gt; process.binding(&#39;fs&#39;);
+{ access: [Function: access],
+  close: [Function: close],
+  open: [Function: open],
+  ...lots of stuff...
+</code></pre>
+<p>returns lots of C++ methods and classes that are heavily used for interoperation
+between C++ and JS in <code>lib/fs.js</code>. Similar stuff is done for the rest of the
+<code>lib/</code> modules.</p>
+<h2 id="v0-6">v0.6</h2>
+<p>Just a short note: <code>libev</code> was removed and replaced by <a href="https://github.com/libuv/libuv">libuv</a>. A product of
+lots of work by Ben Noordhuis, Bert Belder, Ryan Dahl, and others!</p>
+<p>The v0.6 version is a major milestone in evolution of node.js. Partly because
+Windows is now in the list of the officially supported platforms, partly because
+we have our own single event-loop platform that supports both async File System
+and async networking operations.</p>
+<h2 id="v0-10">v0.10</h2>
+<p>Good, stable, but boring...</p>
+<h2 id="v0-12-and-io-js">v0.12 and io.js</h2>
+<p>Lots of new stuff! :)</p>
+<p>Mainly, we have outgrown the <code>ObjectWrap</code> to accommodate the tracing API (which
+is still needs lots of rework, AFAIK). The hip thing now is <code>AsyncWrap</code> which is
+in many ways the same thing, but now is attached to some particular domain of
+operation (i.e. http, dns, tls) and which might have the another <code>AsyncWrap</code> as
+a parent. Note that <code>ObjectWrap</code> lives in <code>src/node_object_wrap.h</code>, and
+<code>AsyncWrap</code> in <code>src/async-wrap.h</code>.</p>
+<p>This is now the present point of the node.js evolution, and I would like to
+stop with the Software Archeology at this point.</p>
+<h2 id="interoperation-handles-wraps-and-unicorns-">Interoperation, handles, wraps, and unicorns!</h2>
+<p>We are finally ready to dive into the C++ internals, and explore them in a
+greater detail.</p>
+<p>As we already figured out - whole APIs provided by the node.js/io.js live in
+two folders: <code>lib</code> and <code>src</code>. <code>lib</code> holds the core modules, <code>src</code> holds their
+C++ counterparts.</p>
+<p>When you call <code>require(&#39;fs&#39;)</code> - it does nothing but just executes the contents
+of the <code>lib/fs.js</code> file. No magic here.</p>
+<p>Now comes the interesting part, JavaScript is not capable of file system
+operations, nor it is capable of networking. This is actually for the
+best! (You don&#39;t want your browser to mess up whole file system,
+right?) So when you do <code>fs.writeFileSync</code>, or when you are calling
+<code>http.request()</code> there is a lot of low-level C++ stuff happening outside of the
+JS-land.</p>
+<p>While the <code>fs</code> module is quite simple to explain, it is quite boring too. After
+all, in most of the cases it is just using number to represent the opened
+file (so called <code>file descriptor</code>), and it is passing this number around:
+from C++ to JS, and from JS to C++. Nothing interesting, let&#39;s move on!</p>
+<p>Certainly much more attractive is the <code>net</code> module. We create sockets, get
+the <code>connect</code> events, and expect the <code>.write()</code> callbacks to be eventually
+invoked. All of these should be powered by the C++ machinery!</p>
+<p>Here is where most of the interoperation is happening. The
+<code>tcp_wrap</code> and <code>stream_wrap</code> bindings (remember, <code>process.binding()</code>, right?)
+provide very useful classes for JS-land: TCP, TCPConnectWrap, WriteWrap,
+ShutdownWrap.</p>
+<ul>
+<li><code>TCP</code> holds the TCP socket and provides methods for writing and reading
+stuff</li>
+<li><code>*Wrap</code> objects are what you pass to the <code>TCP</code> methods when you expect
+some async action to happen, and need to receive notification (callback) on
+their completion.</li>
+</ul>
+<p>For example, the normal workflow for <code>net.connect()</code> follows:</p>
+<ul>
+<li>Create <code>TCP</code> instance in <code>lib/net.js</code>, store it in the <code>_handle</code> property of
+the <code>net.Socket</code> object</li>
+<li>Parse all arguments to <code>net.connect()</code></li>
+<li>Create <code>TCPConnectWrap</code> instance (usually named <code>req</code>)</li>
+<li>Invoke <code>.connect()</code> method with <code>req, port, host</code></li>
+<li>Get <code>req.oncomplete</code> function invoked eventually, once the connection was
+established, or once the kernel reported an error</li>
+</ul>
+<p>In conclusion: most of the C++ classes are either handles, or requests.
+Requests are very temporary and never outlive the handle that they are bound to,
+while the handles are something that live much longer (i.e. for the entire life
+time of the TCP connection).</p>
+<p>Speaking of the file structure: <code>TCP</code> is represented by the <code>TCPWrap</code> class in
+<code>src/tcp_wrap.cc</code>, <code>TCPConnectWrap</code> lives in the same place, and <code>WriteWrap</code>
+is in the <code>stream_base.cc</code> file (in io.js).</p>
+<h2 id="structure-of-c-files">Structure of C++ files</h2>
+<p>But how does the C++ provide this classes to JavaScript?</p>
+<p>Each binding has a <code>NODE_MODULE_CONTEXT_AWARE_BUILTIN</code> macro that registers it
+in the <code>node.cc</code>. This has the same effect as following JavaScript snippet:</p>
+<pre><code class="lang-javascript">modules[moduleName] = {
+  initialized: false,
+  initFn: moduleInitFn
+};
+</code></pre>
+<p>When <code>process.binding(&#39;moduleName&#39;)</code> is invoked, <code>node.cc</code> looks up the proper
+internal binding in this hashmap and initializes it (if it wasn&#39;t previously
+initialized) by calling the supplied function.</p>
+<pre><code class="lang-javascript">process.binding = function(moduleName) {
+  var module = modules[moduleName];
+  if (module.initialized)
+    return module.exports;
+
+  module.exports = {};
+  module.initFn(module.exports);
+  return module.exports;
+};
+</code></pre>
+<p>This initialization function receives <code>exports</code> object as an input, and exports
+the methods and classes to it in pretty much the same way as you normally do
+in CommonJS modules.</p>
+<p>Each of the exported classes are bound to some C++ classes, and most of them are
+actually derived from the <code>AsyncWrap</code> C++ class.</p>
+<p>The Handle instances are destroyed automatically by V8&#39;s GC (once they are
+closed in JS), and the Wraps are manually destroyed by the Handle, once they are
+not used anymore.</p>
+<p>Side-note:</p>
+<p>there are two types of references to the JS
+objects from C++ land: normal and weak. By default <code>AsyncWrap</code>s are referencing
+their objects in a <code>normal</code> way, which means that the JS objects representing
+the C++ classes won&#39;t be garbage collected until C++ class will dispose the
+reference. The weak mode is turned on only when the <code>MakeWeak</code> is called
+somewhere in C++. This might be very useful when debugging memory leaks.</p>
+<h2 id="small-exam">Small exam</h2>
+<h3 id="situation">Situation</h3>
+<p>You debug some io.js/node.js issue, and find that it is crashing when
+instantiating a class provided by <code>process.binding(&#39;broken&#39;)</code>. Where will you
+attempt to search for the C++ source code of that class?</p>
+<h3 id="answer">Answer</h3>
+<p>Somewhere in <code>src/</code>. Find
+<code>NODE_MODULE_CONTEXT_AWARE_BUILTIN(broken, ...)</code> and it is most like going to be
+in <code>src/broken_something.cc</code>.</p>
+<h2 id="c-streams">C++ Streams</h2>
+<p>Now comes one of my recent obsessions. The C++ Stream API.</p>
+<p>It is a established fact for me that exposing the building blocks of APIs helps
+to renovate, reshape and make them better <em>a lot better</em>. One of such thing
+that I was always keen to re-do was a <code>StreamWrap</code> instance.</p>
+<p>It was ok-ish in v0.10, but when we moved TLS (SSL) implementation into C++
+land it changed dramatically... and, honestly saying, not in a good way.</p>
+<p>The previously singular <code>StreamWrap</code> instance, now became a monster that was
+capable of passing the incoming data elsewhere, skipping the JavaScript
+callbacks completely and doing some dark-magic OpenSSL machinery on top of it.
+The implementation worked like a charm, providing much better TLS performance,
+but the source code became cluttered and rigid.</p>
+<p>This &quot;move-parsing-to-elsewhere&quot; thing reminded me a lot about the
+<code>stream.pipe</code> that we had for JavaScript streams for ages. The natural thing to
+do about it was to introduce something similar in the C++ land too. This is
+exactly what was done in io.js, and the results of this live in
+<code>src/stream_base.cc</code>.</p>
+<h2 id="next-step-with-the-c-stream-apis">Next step with the C++ Stream APIs</h2>
+<p>Now we have a very general implementation of this thing that could be reused in
+many places. The first thing that I expect will be using this might be an
+HTTP2 stream. To do it in core, we should do it in user-land first, and it could
+be accomplished only by exposing the C++ Stream API, in the same way as we did
+it with ObjectWrap.</p>
+<h2 id="epilogue">Epilogue</h2>
+<p>I&#39;m going to ask you to:</p>
+<ul>
+<li>Clone the io.js repo</li>
+<li>Open the <code>src/</code></li>
+<li>Go through files in it, and check what you read about it</li>
+<li>Open <code>src/stream_base.h</code>, <code>src/stream_base.cc</code> and friends and figure out
+what seems to be wrong to you</li>
+<li><a href="https://github.com/nodejs/io.js/pulls">Send a PR</a></li>
+<li>Have fun!</li>
+</ul>
+
+        </section>
+      </article>
+    </section>
+    <script>
+      (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+      (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+      m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+      })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+    
+      ga('create', 'UA-68572164-1', 'auto');
+      ga('send', 'pageview');
+    
+    </script>
+    <script src="https://vote.wdgt.io/cdn/snippet-v2.js" async></script>
+  </body>
+</html>
